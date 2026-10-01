@@ -1,0 +1,16 @@
+[Unit]
+# The BeagleY-AI's CC3301 runs BLE on the same firmware as Wi-Fi. TI's cc33xx driver leaves
+# BLE off (debugfs ble_enable=0), so btti never registers hci0 and BlueZ sees no adapter.
+# This flips it on once the Wi-Fi firmware is up. LE only — the CC3301 has no BR/EDR.
+Description=KR-Robot: enable CC33xx BLE so hci0 appears
+After=sys-kernel-debug.mount
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Writing 1 when BLE is already on returns EIO, so check the current value first.
+ExecStart=/bin/sh -c 'f=/sys/kernel/debug/ieee80211/phy0/cc33xx/ble_enable; for i in $(seq 60); do if [ -e "$f" ]; then [ "$(cat "$f")" = 1 ] && exit 0; echo 1 > "$f" 2>/dev/null; fi; sleep 1; done; echo "cc33xx BLE could not be enabled ($f)"; exit 1'
+
+[Install]
+WantedBy=multi-user.target

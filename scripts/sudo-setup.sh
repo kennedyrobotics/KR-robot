@@ -23,7 +23,13 @@ sudo systemctl daemon-reload
 if [ "${1:-}" = "--bluetooth" ]; then
   echo "==> Bluetooth service ..."
   sudo systemctl enable --now bluetooth
-  sudo rfkill unblock bluetooth || true
+  command -v rfkill &>/dev/null && sudo rfkill unblock bluetooth || true
+  echo "==> CC33xx BLE enable at boot (onboard radio is LE-only) ..."
+  sudo install -m 0644 "${APP_DIR}/systemd/krc-ble-enable.service" /etc/systemd/system/krc-ble-enable.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now krc-ble-enable
+  sleep 3
+  [ -e /sys/class/bluetooth/hci0 ] && echo "    hci0 present" || echo "    hci0 NOT present — check: journalctl -u krc-ble-enable"
 fi
 
 cat <<EOF

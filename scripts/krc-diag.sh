@@ -68,8 +68,14 @@ section "BLUETOOTH"
 systemctl is-active --quiet bluetooth && ok "bluetooth.service active" \
   || warn "bluetooth.service inactive (scripts/sudo-setup.sh --bluetooth)"
 rfkill list bluetooth 2>/dev/null | sed 's/^/        /'
+systemctl is-enabled --quiet krc-ble-enable 2>/dev/null && ok "krc-ble-enable.service enabled (CC33xx BLE on at boot)" \
+  || warn "krc-ble-enable.service not enabled (scripts/sudo-setup.sh --bluetooth)"
+[ -e /sys/class/bluetooth/hci0 ] && ok "hci0 registered (onboard CC3301 — LE only, no Classic)" \
+  || fail "no hci0 — CC33xx BLE not enabled"
 CTRL="$(timeout 4 bluetoothctl list 2>/dev/null)"
-[ -n "$CTRL" ] && ok "controller: $CTRL" || warn "no BT controller reported (service down, or onboard CC33xx BLE-only radio not registered)"
+[ -n "$CTRL" ] && ok "controller: $CTRL" || warn "bluetoothd reports no controller"
+PAIRED="$(timeout 4 bluetoothctl devices Paired 2>/dev/null)"
+[ -n "$PAIRED" ] && info "paired: $(echo "$PAIRED" | tr '\n' ';')"
 lsusb | grep -qi bluetooth && info "USB BT dongle: $(lsusb | grep -i bluetooth | cut -d' ' -f6-)"
 
 section "SUMMARY"

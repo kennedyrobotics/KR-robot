@@ -105,10 +105,13 @@ ASCII frames `$cmd:args#` at 115200 8N1. Init sequence, with ~100 ms between com
 
 ### 4.1 Joystick connection options, in order of preference
 
-1. **Bluetooth, PC mode, onboard BeagleY-AI radio.** The pad advertises as "Xbox Wireless Controller". The onboard radio is believed to be BLE-only, so this option may not work.
+1. **Bluetooth, PC mode, onboard BeagleY-AI radio.** The pad advertises as "Xbox Wireless Controller".
+   - **Confirmed 2026-10-01:** the onboard CC3301 is BLE-only (`btmgmt` reports `le` but no `br/edr`).
+   - TI's cc33xx driver leaves BLE off (debugfs `ble_enable=0`), so no `hci0` ever appears. [systemd/krc-ble-enable.service](systemd/krc-ble-enable.service) turns it on at boot.
+   - Pair with [scripts/bt-pair-gamepad.sh](scripts/bt-pair-gamepad.sh). This works only if the pad's Xbox emulation uses BLE, as Series-style controllers do.
 2. **USB Bluetooth Classic dongle.** Pad in PS4 or Switch mode, using `hid-playstation` / `hid-nintendo`.
 3. **8BitDo USB Wireless Adapter 2.** The pad appears as a wired Xbox pad (`xpad`).
-4. **Wired USB, XInput (`xpad`).** Used for bench work now.
+4. **Wired USB, XInput (`xpad`).** Used for bench work now. Verified 2026-10-01: the pad enumerates as `045e:028e` "Microsoft X-Box 360 pad" and supports rumble. It needs a USB data cable in a USB-A port.
 
 All the required kernel modules (`xpad`, `hid-playstation`, `hid-nintendo`, `btusb`, `uinput`, `ch341`) are present in the stock `6.1.83-ti-arm64` kernel. [krc/joystick.py](krc/joystick.py) reads the axis ranges from the kernel, so every mode normalises to the same −1..+1 values.
 
