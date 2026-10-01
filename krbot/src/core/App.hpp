@@ -1,0 +1,51 @@
+#pragma once
+// core — wiring, config, lifecycle (doc v3 §9). Owns every layer and the queues between them.
+//
+// Start order (bottom-up):  L1 drivers -> L3 FactStore -> L2 perception -> L4 reasoning ->
+//                           L5 watchdog + manual drive + arbiter loop
+// Stop order (safety first): L5 manual drive (zeros motors) -> watchdog -> arbiter -> L4 -> L2 -> L3
+//                           -> final stopAll()
+
+#include "common/Config.hpp"
+
+#include <atomic>
+#include <memory>
+#include <thread>
+
+namespace krbot::driver { class DriverRegistry; }
+namespace krbot::knowledge { class FactStore; }
+namespace krbot::percep { class PerceptionLoop; }
+namespace krbot::reason { class ReasoningLoop; }
+namespace krbot::exec { class ManualDrive; class Watchdog; class GoalArbiter; }
+
+namespace krbot::core {
+
+class App {
+public:
+    explicit App(common::Config cfg);
+    ~App();
+
+    void start();
+    void stop();
+    void requestEstop(const char* reason);
+    void logStatus() const;
+
+private:
+    void arbiterLoop();
+
+    common::Config cfg_;
+    std::unique_ptr<driver::DriverRegistry> drivers_;
+    std::unique_ptr<knowledge::FactStore> facts_;
+    std::unique_ptr<percep::PerceptionLoop> percep_;
+    std::unique_ptr<reason::ReasoningLoop> reason_;
+    std::unique_ptr<exec::Watchdog> watchdog_;
+    std::unique_ptr<exec::ManualDrive> manual_;
+    std::unique_ptr<exec::GoalArbiter> arbiter_;
+    struct Queues;
+    std::unique_ptr<Queues> queues_;
+    std::atomic<bool> arbiterRunning_{false};
+    std::thread arbiterThread_;
+    bool started_ = false;
+};
+
+}  // namespace krbot::core

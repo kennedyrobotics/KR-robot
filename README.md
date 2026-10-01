@@ -2,7 +2,11 @@
 
 KR-Robot is a skid-steer tracked robot. A BeagleY-AI (TI AM67A, Debian 13) runs all the software, and a Yahboom STM32 co-processor drives the motors. This repo holds the software architecture, the design decisions behind it, and the bring-up tooling for Phase 0–1: motor board and joystick teleop.
 
-> **Status (2026-10-01):** Phase 0–1 bring-up. The tooling is deployed and its unit tests pass on the target. Next comes hardware-in-the-loop work: plug in the motor board and the SN2403, and verify the serial protocol. See [docs/bringup.md](docs/bringup.md) for the bench procedure.
+> **Status (2026-10-02):** Phase 0–1.
+>
+> - The Python bring-up tooling and the desktop app are deployed. The SN2403 is verified wired (xpad), and onboard BLE is enabled.
+> - The first increment of the **C++ 5-layer stack** ([krbot/](krbot/)) builds on the target, and its 39 unit tests pass.
+> - Next: verify the motor board's serial protocol on the bench ([docs/bringup.md](docs/bringup.md)), then add CLIPS and BehaviorTree.CPP (Phase 1).
 
 ---
 
@@ -13,12 +17,12 @@ flowchart LR
     subgraph Operator
         PAD[SN2403 gamepad<br/>USB / Bluetooth]
     end
-    subgraph BeagleY-AI ["BeagleY-AI (Linux, L1–L5)"]
-        L5[L5 Operator input<br/>InputDriver + watchdog]
-        L4[L4 Goal arbiter]
-        L3[L3 Behaviour / planning]
-        L2[L2 State estimation<br/>odometry]
-        L1[L1 Hardware drivers<br/>YahboomMotorControllerDriver]
+    subgraph BeagleY-AI ["BeagleY-AI — krbot (C++20, L1–L5)"]
+        L5[L5 Execution & Operator Interface<br/>GoalArbiter, BT executor, InputDriver, watchdog]
+        L4[L4 Reasoning / Planning<br/>CLIPS rule engine]
+        L3[L3 Knowledge / World Model<br/>FactStore]
+        L2[L2 Perception / Sensing<br/>observations → facts]
+        L1[L1 Driver / Controller<br/>YahboomMotorControllerDriver]
     end
     subgraph Drive
         YB[Yahboom YB-ESF01<br/>STM32F103 + 4x AT8236]
@@ -27,10 +31,12 @@ flowchart LR
     end
     PAD -- evdev --> L5
     L5 -- "manual drive + e-stop<br/>(direct path)" --> L1
-    L5 --> L4 --> L3 --> L1
+    L4 -- goals --> L5
+    L3 <-- "facts / deltas" --> L4
+    L1 -- raw readings --> L2 -- facts --> L3
+    L5 -- "task outcomes" --> L3
     L1 -- "USB-C serial<br/>/dev/krc-motor 115200" --> YB
     YB --> ML & MR
-    YB -. "encoder telemetry<br/>(after upgrade)" .-> L1 --> L2 --> L3
 ```
 
 | Item | Part | Notes |
@@ -47,24 +53,27 @@ flowchart LR
 
 ## 2. Software architecture: five layers
 
-The layers are ordered from the hardware up. Safety-critical operator commands skip the middle layers.
+The authoritative design is **Design doc v3**, "KR-bot Agentic Software Architecture" (`Engineering/Projects/KRC-Robot/Design/knowledge-agent-architecture.md`, kept outside this repo). [docs/system-design.md](docs/system-design.md) is the first-cut system design that maps it onto the code in [krbot/](krbot/), with deviations recorded. Sensor data flows up from L1 to L3, goals flow down from L4 to L5, and commands flow down from L5 to L1.
 
-| Layer | Responsibility | Key interfaces | Phase 0–1 state |
+| Layer | Responsibility (doc v3) | Code (`krbot/src/…`) | State (first increment) |
 |---|---|---|---|
-| **L1 Hardware drivers** | Motor board transport and protocol, encoder readback, future servo/IMU drivers | `IMotorController::setChannelSpeed()`, `YahboomMotorControllerDriver` | Python reference driver in [krc/yahboom.py](krc/yahboom.py) |
-| **L2 State estimation** | Wheel odometry from encoder counts, later sensor fusion | encoder `$MAll` / `$MTEP` / `$MSPD` | Blocked until the encoder motors are fitted |
-| **L3 Behaviour / planning** | Autonomous behaviours and motion planning | — | Not started |
-| **L4 Goal arbiter** | Chooses which source commands motion | — | Not started |
-| **L5 Operator input + watchdog** | Gamepad input, arm/deadman/e-stop, link-loss detection | `InputDriver` over evdev | Python reference in [krc/joystick.py](krc/joystick.py) and [krc/drive.py](krc/drive.py) |
+| **L1 Driver / Controller** | Talk to hardware through typed interfaces, with no semantics | `driver/`: `IMotorController`, `YahboomMotorControllerDriver`, `SerialPort`, `I2CDevice`, `DriverRegistry` | **Real.** USB serial driver, plus a sim for dry runs |
+| **L2 Perception / Sensing** | Turn raw readings into observations, filter them, and map them to facts | `percep/`: `PerceptionLoop`, `ObservationMapper`, `MotorHealthSource` | Skeleton. Motor-link health only |
+| **L3 Knowledge / World Model** | `FactStore`, the single source of truth, owned by its own thread | `knowledge/`: `FactTable`, `FactStore` | Working in memory. SQLite persistence is Phase 4 |
+| **L4 Reasoning / Planning** | CLIPS rule engine that posts goals | `reason/`: `IReasoner`, `ReasoningLoop`, `NullReasoner` | Stub. `ClipsEngine` arrives in Phase 1 |
+| **L5 Execution & Operator Interface** | BT.CPP execution, GoalArbiter, gamepad, watchdog | `exec/`: `ManualDrive`, `TeleopSafety`, `InputDriver`, `Watchdog`, `GoalArbiter` | **Real** for teleop and the watchdog. BT executor is a stub |
 
 ### 2.1 Direct path for manual drive and e-stop
 
-Manual drive and e-stop go **straight from L5 to L1**, bypassing L3/L4 and the goal arbiter. A fault or stall in the autonomy stack therefore cannot block a stop command.
+Manual drive and e-stop go **straight from L5 to L1** (`ManualDrive`), bypassing L3/L4 and the goal arbiter. A fault or stall in the autonomy stack therefore cannot block a stop command.
+
+An independent `Watchdog` thread backs this up. If the control loop stops ticking for 200 ms, the watchdog calls `IMotorController::stopAll()` directly.
 
 ### 2.2 Language strategy
 
-- **Bring-up (now): Python 3.** It needs only `python3-serial`, which is already on the image, and gamepad input uses raw evdev `ioctl`s. That makes protocol discovery fast and lets the logic be unit-tested on Windows.
-- **Production: C++17.** The C++ L1/L5 classes port the verified Python modules: the same framing, state machine, and tests. The earlier C++ experiments in [motor/](motor/) and [servo/](servo/) set the conventions: CMake, built on the target.
+- **Production: C++20, plain CMake, no middleware** ([krbot/](krbot/)). It is built natively on the BeagleY-AI. The interfaces are kept ROS-2-friendly so that a bridge can be added later (see [docs/system-design.md](docs/system-design.md) §8).
+- **Bench tools: Python 3** ([krc/](krc/), [tools/](tools/), the desktop app). These were the reference implementations. The C++ ports use the same protocol framing and safety state machine, and are tested against the same unit-test cases.
+- The earlier C++ experiments in [motor/](motor/) (TB6612) and [servo/](servo/) (PCA9685) are superseded.
 
 ---
 
@@ -210,6 +219,7 @@ Safety rules in the GUI:
 | Path | Contents |
 |---|---|
 | [krc_robot_gui.py](krc_robot_gui.py), [images/](images/) | Desktop app and its icon |
+| [krbot/](krbot/) | **C++20 5-layer stack** (production). `src/{driver,percep,knowledge,reason,exec,core}`, GoogleTest tests, `config/krbot.conf`. Build with `scripts/build-krbot.sh` |
 | [krc/](krc/) | Python reference drivers: `yahboom.py` (L1), `joystick.py` and `drive.py` (L5), and `core.py` (the shared 50 Hz control loop) |
 | [tools/](tools/) | Bench CLIs: `joystick-controller-debug.py`, `joy_test.py`, `yahboom_probe.py`, `teleop.py` |
 | [tests/](tests/) | Hardware-free unit tests. Run `python -m unittest discover -s tests` on Windows or the board |
@@ -245,9 +255,10 @@ Safety rules in the GUI:
 
 ### Phase 2 and later
 
-- [ ] Port L1/L5 to C++ behind `IMotorController` / `InputDriver`
+- [x] C++ stack, first increment: all five layers as libraries, with L1 (Yahboom) and L5 (teleop, watchdog, arbiter) real ([docs/system-design.md](docs/system-design.md))
+- [ ] Phase 1: vendor CLIPS 6.4 (`ClipsEngine`) and BehaviorTree.CPP (`HoldPosition`/`Idle` trees). Add the first safety-band rule (obstacle stop)
 - [ ] Fit the encoder motors (check mechanical fit first), switch to closed-loop speed, add L2 odometry
-- [ ] Update the architecture doc §2/§8 for USB-serial transport
+- [ ] Update Design doc v3 §2/§8 for the USB-serial transport and the `setAllChannels` extension (see system-design §7)
 - [ ] Bring up L3/L4, then the VIU and BMS custom hardware
 
 ## References
