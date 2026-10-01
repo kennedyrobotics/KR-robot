@@ -1,0 +1,17 @@
+[Unit]
+Description=KRC-Robot joystick teleop (SN2403 -> Yahboom motor board)
+After=dev-krc\x2dmotor.device bluetooth.target
+Wants=dev-krc\x2dmotor.device
+
+[Service]
+Type=simple
+User=beagle
+ExecStart=/usr/bin/python3 /home/beagle/krc-robot/tools/teleop.py
+# teleop sends zero PWM on SIGTERM before exiting
+KillSignal=SIGTERM
+TimeoutStopSec=3
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

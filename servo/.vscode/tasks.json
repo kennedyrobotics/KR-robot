@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CMake Configure",
+      "type": "shell",
+      "command": "cmake -S . -B build",
+      "group": "build",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "CMake Build",
+      "type": "shell",
+      "command": "cmake --build build -j",
+      "dependsOn": [
+        "CMake Configure"
+      ],
+      "group": "build",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Make Build (fallback)",
+      "type": "shell",
+      "command": "make",
+      "group": "build",
+      "problemMatcher": "$gcc"
+    }
+  ]
+}

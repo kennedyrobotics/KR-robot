@@ -1,0 +1,5 @@
+# KRC-Robot udev rules — installed by scripts/sudo-setup.sh
+# Yahboom YB-ESF01 motor board: CH340K USB-UART (1a86:7522; plain CH340 is 7523)
+# -> stable /dev/krc-motor symlink so ttyUSB renumbering never matters.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7522", SYMLINK+="krc-motor", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="krc-motor", GROUP="dialout", MODE="0660"
