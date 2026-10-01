@@ -37,8 +37,8 @@ Write-Host "==> Deploying KRC-Robot bring-up to ${Target}:${REMOTE_DIR}" -Foregr
 
 $bundle = Join-Path $env:TEMP "krc-robot-deploy.tgz"
 if (Test-Path $bundle) { Remove-Item $bundle -Force }
-tar -czf $bundle -C $ScriptDir --exclude "__pycache__" --exclude "*.pyc" `
-    krc tools tests scripts udev systemd docs images krc_robot_gui.py remote-setup.sh README.md
+tar -czf $bundle -C $ScriptDir --exclude "__pycache__" --exclude "*.pyc" --exclude "krbot/build" `
+    krc krbot tools tests scripts udev systemd docs notes images krc_robot_gui.py remote-setup.sh README.md
 if ($LASTEXITCODE -ne 0) { throw "tar failed" }
 $sizeKB = [math]::Round((Get-Item $bundle).Length / 1KB, 1)
 Write-Host "    Bundle: ${sizeKB} KB" -ForegroundColor DarkGray
