@@ -122,8 +122,10 @@ stateDiagram-v2
     DISARMED --> ESTOP: B or HOME
     ESTOP --> ARMED: START (LB released, sticks centred)
     ARMED --> DISARMED: link lost (pad ENODEV / read error)
-    ESTOP --> DISARMED: link lost
+    ARMED --> ESTOP: GUI E-STOP / motor link lost
 ```
+
+ESTOP stays latched through a gamepad link loss, because it is stricter than DISARMED.
 
 - **Deadman:** output is non-zero only while LB is held. Releasing LB zeroes the output instantly, with no slew.
 - **Stopping is easy, re-arming is deliberate.** E-stop latches. Re-arming requires releasing everything and then pressing START.
@@ -166,11 +168,46 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 
 ---
 
-## 7. Repo layout
+## 7. Desktop app: KR-Robot Control
+
+[krc_robot_gui.py](krc_robot_gui.py) is a tkinter app that runs on the BeagleY-AI desktop. Its layout and dark theme match the atr-viu-emulator dashboard. `deploy.ps1` installs a **KR-Robot Control** shortcut on the Xfce desktop and in the application menu.
+
+```mermaid
+flowchart LR
+    GUI["krc_robot_gui.py<br/>(Tk main thread, 10 Hz refresh)"] -- "snapshot()" --> CORE
+    GUI -- "estop(), connect_motors(),<br/>bench_pulse(), send_raw() …" --> CORE
+    CORE["krc/core.py RobotCore<br/>(50 Hz control thread)"] --> PAD[krc/joystick.py]
+    CORE --> DRV[krc/drive.py<br/>TeleopController]
+    CORE --> YB[krc/yahboom.py]
+    SVC["tools/teleop.py<br/>(headless, krc-teleop.service)"] --> CORE
+```
+
+| Tab | What it does |
+|---|---|
+| **Drive** | Shows the mode (DISARMED, ARMED or ESTOP) and the deadman state. Has status cards for the gamepad, the motor board and the control loop, plus live L/R track PWM bars and connect/disconnect buttons |
+| **Joystick** | Plots both sticks and shows triggers, D-pad, every button with its press count and verified total, all the axes, and the rumble test buttons |
+| **Motor board** | Edits the settings (port, PWM keyword, profile, max PWM, turn scale, slew, deadband, expo, tank, inversion) and saves them to `~/.config/krc-robot/settings.json`. Also has a single-channel bench pulse that needs a "tracks off ground" confirmation, `$upload` flags, a raw-frame sender, and the telemetry and unrecognised-frame views |
+| **Log** | Shows mode changes, link events, and errors. Can be saved to a file |
+| **Diagnostics** | Runs `scripts/krc-diag.sh` and shows its output |
+
+Safety rules in the GUI:
+
+- **SPACE**, **ESC** and the red button are all E-STOP. Buttons never take keyboard focus, so SPACE cannot trigger anything else.
+- Re-arming is possible **only from the gamepad** (START).
+- A bench pulse is refused while ARMED, and any e-stop cancels it.
+- Closing the window sends zero PWM.
+- The serial port is opened exclusively, so the GUI and `krc-teleop.service` cannot drive the board at the same time.
+
+`--dry-run` runs the GUI with joystick input only and never opens the motor port.
+
+---
+
+## 8. Repo layout
 
 | Path | Contents |
 |---|---|
-| [krc/](krc/) | Python reference drivers: `yahboom.py` (L1), `joystick.py` and `drive.py` (L5) |
+| [krc_robot_gui.py](krc_robot_gui.py), [images/](images/) | Desktop app and its icon |
+| [krc/](krc/) | Python reference drivers: `yahboom.py` (L1), `joystick.py` and `drive.py` (L5), and `core.py` (the shared 50 Hz control loop) |
 | [tools/](tools/) | Bench CLIs: `joystick-controller-debug.py`, `joy_test.py`, `yahboom_probe.py`, `teleop.py` |
 | [tests/](tests/) | Hardware-free unit tests. Run `python -m unittest discover -s tests` on Windows or the board |
 | [scripts/](scripts/) | `krc-diag.sh` (no sudo), `sudo-setup.sh` (one-time root setup) |
@@ -187,9 +224,9 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 
 ---
 
-## 8. Roadmap and open items
+## 9. Roadmap and open items
 
-**Phase 0: protocol and hardware**
+### Phase 0: protocol and hardware
 
 - [ ] Verify the `$pwm` / `$spd` keywords, the PWM full scale, and whether the board has a command timeout (`yahboom_probe.py`)
 - [ ] Find the real dead zone of the 33GB-520s and the track direction signs
@@ -197,13 +234,13 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 - [ ] Build the T-plug pigtail, ~10 A fuse and main switch. Fit the LiPo alarm. Source a 5 V ≥5 A buck
 - [ ] Confirm the board's maximum input voltage with Yahboom before any move to 3S
 
-**Phase 1: teleop**
+### Phase 1: teleop
 
 - [ ] Verify the SN2403 wired, then over Bluetooth (onboard radio, then the dongle fallbacks)
 - [ ] Bench teleop on blocks, then on the ground. Enable `krc-teleop.service` afterwards
 - [ ] Contact the seller about the SN2403 2.4 GHz receiver
 
-**Phase 2 and later**
+### Phase 2 and later
 
 - [ ] Port L1/L5 to C++ behind `IMotorController` / `InputDriver`
 - [ ] Fit the encoder motors (check mechanical fit first), switch to closed-loop speed, add L2 odometry

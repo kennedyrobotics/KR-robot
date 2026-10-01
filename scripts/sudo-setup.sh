@@ -6,7 +6,7 @@ set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "==> Packages (evtest for manual checks, pyserial for the motor driver)..."
-sudo apt-get install -y evtest python3-serial
+sudo apt-get install -y evtest python3-serial python3-tk
 
 echo "==> udev rule -> /dev/krc-motor ..."
 sudo install -m 0644 "${APP_DIR}/udev/99-krc-robot.rules" /etc/udev/rules.d/99-krc-robot.rules

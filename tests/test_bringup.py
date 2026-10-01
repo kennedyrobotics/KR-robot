@@ -143,6 +143,11 @@ class TestSafety(unittest.TestCase):
         # link back, sticks still held: must not resume without re-arm
         self.assertEqual(run(self.ctl, Inputs(ly=-1.0, deadman=True)), (0, 0))
 
+    def test_estop_survives_link_loss(self):
+        self.ctl.force_estop("gui")
+        run(self.ctl, Inputs(link_ok=False), n=5)
+        self.assertEqual(self.ctl.mode, Mode.ESTOP)
+
     def test_inversion_and_channels(self):
         ctl = TeleopController(TeleopConfig(max_pwm=1000, invert_right=True, expo=0.0))
         ctl.update(Inputs(arm=True), DT); ctl.update(Inputs(), DT)

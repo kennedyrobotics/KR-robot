@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Joystick teleop: SN2403 -> Yahboom board, open-loop PWM, with deadman / e-stop / watchdog.
+"""Headless joystick teleop (used by krc-teleop.service). Same RobotCore as the desktop app.
 
 Controls (XInput layout):
     START         arm (LB released, sticks centred)
@@ -9,7 +9,9 @@ Controls (XInput layout):
 
     teleop.py [--max-pwm 1800] [--tank] [--no-invert-right] [--dry-run]
 
---dry-run prints commands without opening the motor port — use it to check mixing first.
+Settings default to ~/.config/krc-robot/settings.json (shared with the desktop app);
+command-line flags override them for this run only. Exits non-zero if the motor link
+drops, so systemd restarts it (it comes back DISARMED).
 """
 
 import argparse
@@ -21,122 +23,68 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from krc import joystick as js  # noqa: E402
-from krc import yahboom  # noqa: E402
-from krc.drive import Inputs, TeleopConfig, TeleopController  # noqa: E402
-
-log = logging.getLogger("teleop")
-RATE_HZ = 50
-
-
-class DryRunMotors:
-    port = "(dry-run)"
-    link_ok = True
-
-    def set_pwm(self, *ch):
-        pass
-
-    def stop(self):
-        pass
-
-    def close(self):
-        pass
-
-
-def read_inputs(pad: js.Gamepad) -> Inputs:
-    s = pad.state
-    return Inputs(lx=s.axis(js.ABS_X), ly=s.axis(js.ABS_Y), rx=s.axis(js.ABS_RX), ry=s.axis(js.ABS_RY),
-                  deadman=s.button(js.BTN_TL), arm=s.button(js.BTN_START),
-                  estop=s.button(js.BTN_EAST) or s.button(js.BTN_MODE))
+from krc.core import RobotCore, Settings  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default=yahboom.DEFAULT_PORT)
+    ap.add_argument("--port")
     ap.add_argument("--dev", help="gamepad /dev/input/eventN (default: auto)")
-    ap.add_argument("--max-pwm", type=int, default=TeleopConfig.max_pwm)
+    ap.add_argument("--max-pwm", type=int)
     ap.add_argument("--tank", action="store_true")
     ap.add_argument("--invert-left", action="store_true")
     ap.add_argument("--no-invert-right", action="store_true")
-    ap.add_argument("--pwm-cmd", default=yahboom.PWM_CMD)
+    ap.add_argument("--pwm-cmd")
     ap.add_argument("--no-init", action="store_true", help="skip the $mtype/$deadzone init sequence")
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="no motor port; log what would be sent")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
 
-    cfg = TeleopConfig(max_pwm=a.max_pwm, tank=a.tank, invert_left=a.invert_left,
-                       invert_right=not a.no_invert_right)
-    ctl = TeleopController(cfg)
+    s = Settings.load()
+    s.port = a.port or s.port
+    s.pwm_cmd = a.pwm_cmd or s.pwm_cmd
+    s.init_on_connect = s.init_on_connect and not a.no_init
+    if a.max_pwm is not None:
+        s.teleop.max_pwm = a.max_pwm
+    s.teleop.tank = a.tank or s.teleop.tank
+    s.teleop.invert_left = a.invert_left or s.teleop.invert_left
+    if a.no_invert_right:
+        s.teleop.invert_right = False
 
-    if a.dry_run:
-        motors = DryRunMotors()
-    else:
-        motors = yahboom.YahboomMotorController(a.port, max_pwm=a.max_pwm, pwm_cmd=a.pwm_cmd)
-        motors.open()
-        if not a.no_init:
-            motors.configure(yahboom.PROFILE_33GB520_NO_ENCODER)
-        motors.stop()
-
-    stop_requested = False
+    core = RobotCore(s, gamepad_dev=a.dev, dry_run=a.dry_run)
+    stop = False
 
     def _sig(*_):
-        nonlocal stop_requested
-        stop_requested = True
+        nonlocal stop
+        stop = True
 
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
 
-    pad = None
-    next_reconnect = 0.0
-    last_status = None
-    period = 1.0 / RATE_HZ
-    t_prev = time.monotonic()
-    try:
-        while not stop_requested:
-            now = time.monotonic()
-            dt, t_prev = now - t_prev, now
-
-            if pad is None and now >= next_reconnect:
-                try:
-                    pad = js.Gamepad(a.dev)
-                    log.info("gamepad connected: %s (%s) — press START to arm", pad.name, pad.path)
-                except OSError:
-                    next_reconnect = now + 1.0
-
-            inputs = Inputs(link_ok=False)
-            if pad is not None:
-                try:
-                    pad.poll(0.0)
-                    inputs = read_inputs(pad)
-                except OSError as e:
-                    log.warning("gamepad link lost (%s) — SAFE STOP", e)
-                    pad.close()
-                    pad = None
-                    next_reconnect = now + 1.0
-
-            if not motors.link_ok:
-                log.error("motor serial link lost — SAFE STOP and exit")
-                break
-
-            left, right = ctl.update(inputs, dt)
-            motors.set_pwm(*ctl.channels(left, right))
-
-            # mode changes always logged; per-tick outputs only in dry-run / verbose
-            status = (ctl.mode, ctl.reason, (left, right) if (a.dry_run or a.verbose) else None)
-            if status != last_status:
-                log.info("%-9s L=%+5d R=%+5d  (%s)", ctl.mode.value, left, right, ctl.reason)
-            last_status = status
-
-            time.sleep(max(0.0, period - (time.monotonic() - now)))
-    finally:
-        motors.stop()
-        motors.close()
-        if pad is not None:
-            pad.close()
-        log.info("teleop exit — motors stopped")
-    return 0
+    core.start()
+    time.sleep(0.5)
+    rc = 0
+    if not a.dry_run and core.snapshot()["motors"] is None:
+        logging.error("motor board not available (%s) — exiting", core.motor_error or s.port)
+        stop, rc = True, 1
+    last = None
+    while not stop:
+        snap = core.snapshot()
+        if not a.dry_run and snap["motors"] is None:
+            logging.error("motor link lost — exiting so systemd restarts us DISARMED")
+            rc = 1
+            break
+        if a.dry_run or a.verbose:
+            cur = (snap["mode"], snap["out"])
+            if cur != last:
+                logging.info("%-9s L=%+5d R=%+5d  (%s)", snap["mode"], *snap["out"], snap["reason"])
+                last = cur
+        time.sleep(0.05)
+    core.shutdown()
+    logging.info("teleop exit — motors stopped")
+    return rc
 
 
 if __name__ == "__main__":

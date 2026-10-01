@@ -23,6 +23,7 @@ dead-zone defaults (1000–1900) are consistent with that. Confirm before raisin
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -151,6 +152,8 @@ class YahboomMotorController:
         ser.timeout = 0.05
         ser.dtr = False
         ser.rts = False
+        if os.name == "posix":
+            ser.exclusive = True     # flock: GUI and krc-teleop.service can't both drive the board
         ser.open()
         ser.reset_input_buffer()
         return ser

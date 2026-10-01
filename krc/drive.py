@@ -77,6 +77,11 @@ class TeleopController:
         self._right = 0.0
         self._prev_arm = False
 
+    def force_estop(self, reason: str) -> None:
+        """Latch ESTOP from outside the gamepad (GUI button, motor link loss). Re-arm with START."""
+        self.mode, self.reason = Mode.ESTOP, reason
+        self._left = self._right = 0.0
+
     def _sticks_centred(self, i: Inputs) -> bool:
         b = self.cfg.stick_deadband
         return all(abs(v) <= b for v in (i.lx, i.ly, i.rx, i.ry))
@@ -87,9 +92,9 @@ class TeleopController:
         self._prev_arm = i.arm
 
         if not i.link_ok:
-            if self.mode != Mode.DISARMED:
-                self.reason = "link lost"
-            self.mode = Mode.DISARMED
+            # ESTOP is stricter than DISARMED, so it stays latched through link loss
+            if self.mode == Mode.ARMED:
+                self.mode, self.reason = Mode.DISARMED, "link lost"
         elif i.estop:
             self.mode, self.reason = Mode.ESTOP, "e-stop pressed"
         elif arm_edge and self.mode != Mode.ARMED:
