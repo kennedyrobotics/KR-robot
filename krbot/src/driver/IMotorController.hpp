@@ -1,5 +1,5 @@
 #pragma once
-// L1 motor interface — doc v3 §2, plus one extension (setAllChannels, see below).
+// L1 motor interface - doc v3 §2, plus one extension (setAllChannels, see below).
 // "Narrow and dumb by design: talk to hardware, expose typed C++ interfaces, no semantics."
 
 #include <array>

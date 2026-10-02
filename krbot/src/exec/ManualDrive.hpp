@@ -1,9 +1,14 @@
 #pragma once
-// ManualDrive — the direct L5->L1 path (doc v3 §6): gamepad -> TeleopController -> IMotorController,
+// ManualDrive - the direct L5->L1 path (doc v3 §6): gamepad -> TeleopController -> IMotorController,
 // bypassing L3/L4 and the GoalArbiter, always highest priority. Runs its own 50 Hz thread, kicks
 // the Watchdog every tick, and reports mode changes / link events to L3 as facts.
 //
 // Thread-safety: requestEstop() and status() may be called from any thread.
+//
+// Gamepad discovery runs on its own thread: scanning /dev/input opens every input device, and
+// opening an autosuspended USB HID device can block for tens of ms. Doing that on the control
+// thread cost ~3 ticks/s at 50 Hz, so the discovery thread opens the pad and hands the open
+// InputDriver over; the control loop only ever polls an already-open device (non-blocking).
 
 #include "driver/IMotorController.hpp"
 #include "exec/InputDriver.hpp"
@@ -12,6 +17,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -29,6 +36,7 @@ struct ManualDriveStatus {
     bool motorsHealthy = false;
     double loopHz = 0;
     std::size_t padDisconnects = 0;
+    TeleopInputs inputs;  // last inputs fed to the controller (for monitoring)
 };
 
 class ManualDrive {
@@ -48,12 +56,13 @@ public:
     void requestEstop(std::string reason);  // thread-safe; applied on the next tick
     ManualDriveStatus status() const;
 
-    // One control step with given inputs — the loop calls this; public for tests.
+    // One control step with given inputs - the loop calls this; public for tests.
     TeleopOutput step(const TeleopInputs& in, float dt);
 
 private:
     void run();
-    TeleopInputs readInputs(std::chrono::steady_clock::time_point now);
+    void discoveryLoop();
+    TeleopInputs readInputs();
     void publishFact(const std::string& subject, const std::string& predicate, const std::string& object);
 
     driver::IMotorController& motors_;
@@ -61,8 +70,14 @@ private:
     Watchdog* watchdog_;
     Options opts_;
     TeleopController ctl_;
-    InputDriver input_;
-    std::chrono::steady_clock::time_point nextPadTry_{};
+    std::unique_ptr<InputDriver> input_;  // control thread only
+
+    // discovery thread -> control thread hand-off
+    std::thread discovery_;
+    std::mutex padMutex_;
+    std::condition_variable padCv_;
+    std::unique_ptr<InputDriver> pendingPad_;
+    bool needPad_ = true;  // guarded by padMutex_
 
     std::atomic<bool> running_{false};
     std::thread thread_;

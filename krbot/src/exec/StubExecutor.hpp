@@ -1,5 +1,5 @@
 #pragma once
-// Stand-in executors until BehaviorTree.CPP (Phase 1). None of them commands motion yet — the
+// Stand-in executors until BehaviorTree.CPP (Phase 1). None of them commands motion yet - the
 // only motion path in this increment is ManualDrive (direct L5->L1).
 //   Idle, HoldPosition -> Running until pre-empted (holding = zero output, which is the default)
 //   anything else      -> Failure on first tick (no tree for that goal type yet)

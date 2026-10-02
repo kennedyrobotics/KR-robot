@@ -1,5 +1,5 @@
 #pragma once
-// Yahboom YB-ESF01 USART protocol — pure, no I/O (ported from krc/yahboom.py; same unit tests).
+// Yahboom YB-ESF01 USART protocol - pure, no I/O (ported from krc/yahboom.py; same unit tests).
 // ASCII frames "$cmd:args#" at 115200 8N1. Board reports: $MAll (total pulses),
 // $MTEP (pulses per 10 ms), $MSPD (mm/s).
 // UNVERIFIED (Phase 0): the "pwm"/"spd" keywords and the ±3600 PWM full scale.

@@ -24,6 +24,7 @@ find_package(Threads REQUIRED)
 # ---- layers: one static library each, dependencies only point downward or to common ----
 add_library(krbot_common STATIC
   src/common/Config.cpp
+  src/common/Json.cpp
   src/common/Log.cpp)
 target_include_directories(krbot_common PUBLIC src)
 target_link_libraries(krbot_common PUBLIC Threads::Threads)
@@ -73,9 +74,14 @@ if(KRBOT_WITH_BTCPP)
   message(FATAL_ERROR "KRBOT_WITH_BTCPP: BehaviorTree.CPP executor lands in Phase 1 — not wired yet")
 endif()
 
-# core: wiring + main()
-add_executable(krbot src/core/App.cpp src/core/main.cpp)
-target_link_libraries(krbot PRIVATE krbot_exec krbot_percep krbot_reason krbot_knowledge krbot_driver)
+# core: wiring, monitor server (server half of KR-bot Monitor), main()
+add_library(krbot_core STATIC
+  src/core/App.cpp
+  src/core/MonitorServer.cpp)
+target_link_libraries(krbot_core PUBLIC krbot_exec krbot_percep krbot_reason krbot_knowledge krbot_driver)
+
+add_executable(krbot src/core/main.cpp)
+target_link_libraries(krbot PRIVATE krbot_core)
 
 install(TARGETS krbot RUNTIME DESTINATION bin)
 
@@ -92,9 +98,9 @@ if(KRBOT_BUILD_TESTS)
       tests/test_fact_table.cpp
       tests/test_goal_arbiter.cpp
       tests/test_watchdog.cpp
-      tests/test_manual_drive.cpp)
-    target_link_libraries(krbot_tests PRIVATE krbot_exec krbot_percep krbot_reason krbot_knowledge
-                          krbot_driver GTest::gtest_main)
+      tests/test_manual_drive.cpp
+      tests/test_monitor.cpp)
+    target_link_libraries(krbot_tests PRIVATE krbot_core GTest::gtest_main)
     include(GoogleTest)
     gtest_discover_tests(krbot_tests)
   else()

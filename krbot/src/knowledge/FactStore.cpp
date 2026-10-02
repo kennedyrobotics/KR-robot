@@ -35,7 +35,7 @@ std::vector<Fact> FactStore::query(FactQuery q) {
 }
 
 void FactStore::publish(FactDelta d) {
-    if (!deltas_.push(std::move(d))) KLOG_WARN(kTag, "delta queue full — L4 not keeping up, delta dropped");
+    if (!deltas_.push(std::move(d))) KLOG_WARN(kTag, "delta queue full - L4 not keeping up, delta dropped");
 }
 
 void FactStore::run() {

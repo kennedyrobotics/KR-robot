@@ -1,5 +1,5 @@
 #pragma once
-// RAII I2C device (raw ioctl I2C_SLAVE) — doc v3 §2/§8. Not used by the motor link (that moved
+// RAII I2C device (raw ioctl I2C_SLAVE) - doc v3 §2/§8. Not used by the motor link (that moved
 // to USB serial, see docs/system-design.md §Deviations) but kept for I2C sensors.
 // BeagleY-AI GPIO/I2C is 3.3 V only.
 

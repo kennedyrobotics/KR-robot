@@ -1,5 +1,5 @@
 #pragma once
-// core — wiring, config, lifecycle (doc v3 §9). Owns every layer and the queues between them.
+// core - wiring, config, lifecycle (doc v3 §9). Owns every layer and the queues between them.
 //
 // Start order (bottom-up):  L1 drivers -> L3 FactStore -> L2 perception -> L4 reasoning ->
 //                           L5 watchdog + manual drive + arbiter loop
@@ -9,7 +9,10 @@
 #include "common/Config.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 
 namespace krbot::driver { class DriverRegistry; }
@@ -20,6 +23,8 @@ namespace krbot::exec { class ManualDrive; class Watchdog; class GoalArbiter; }
 
 namespace krbot::core {
 
+class MonitorServer;
+
 class App {
 public:
     explicit App(common::Config cfg);
@@ -29,9 +34,21 @@ public:
     void stop();
     void requestEstop(const char* reason);
     void logStatus() const;
+    std::string snapshotJson() const;  // status members for the monitor protocol (thread-safe)
 
 private:
     void arbiterLoop();
+    void startMonitor();
+
+    struct GoalSummary {
+        std::string type, target, task;
+        int priority = 0;
+        std::size_t pending = 0;
+    };
+    mutable std::mutex goalMutex_;
+    GoalSummary goalSummary_;  // written by the arbiter thread after each tick
+    std::chrono::steady_clock::time_point startTime_;
+    std::unique_ptr<MonitorServer> monitor_;
 
     common::Config cfg_;
     std::unique_ptr<driver::DriverRegistry> drivers_;

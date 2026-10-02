@@ -23,18 +23,44 @@ ManualDrive::~ManualDrive() { stop(); }
 
 void ManualDrive::start() {
     if (running_.exchange(true)) return;
+    discovery_ = std::thread([this] { discoveryLoop(); });
     thread_ = std::thread([this] { run(); });
 }
 
 void ManualDrive::stop() {
     if (!running_.exchange(false)) return;
+    padCv_.notify_all();
     if (thread_.joinable()) thread_.join();
+    if (discovery_.joinable()) discovery_.join();
     try {
         motors_.stopAll();
     } catch (const std::exception& e) {
         KLOG_ERROR(kTag, "stopAll on shutdown failed: {}", e.what());
     }
-    input_.close();
+    input_.reset();
+    std::lock_guard lock(padMutex_);
+    pendingPad_.reset();
+}
+
+void ManualDrive::discoveryLoop() {
+    std::unique_lock lock(padMutex_);
+    while (running_) {
+        if (needPad_ && !pendingPad_) {
+            lock.unlock();  // the slow part (scan + open) happens without the lock
+            auto pad = std::make_unique<InputDriver>();
+            const bool ok = pad->open(opts_.gamepadPath);
+            lock.lock();
+            if (!ok) {
+                // no pad yet: back off 1 s (the predicate below would be true at once -> spin)
+                padCv_.wait_for(lock, 1s, [&] { return !running_.load(); });
+                continue;
+            }
+            pendingPad_ = std::move(pad);
+            needPad_ = false;
+        }
+        // have a pad: sleep until the control loop reports it lost (or shutdown)
+        padCv_.wait_for(lock, 1s, [&] { return !running_ || (needPad_ && !pendingPad_); });
+    }
 }
 
 void ManualDrive::requestEstop(std::string reason) {
@@ -68,7 +94,7 @@ TeleopOutput ManualDrive::step(const TeleopInputs& in, float dt) {
     }
     const bool healthy = motors_.isHealthy();
     if (!healthy && !motorFaultLatched_) {
-        KLOG_ERROR(kTag, "motor controller unhealthy — E-STOP latched");
+        KLOG_ERROR(kTag, "motor controller unhealthy - E-STOP latched");
         publishFact("motorBoard", "fault", "linkLost");
     }
     motorFaultLatched_ = !healthy;
@@ -99,35 +125,41 @@ TeleopOutput ManualDrive::step(const TeleopInputs& in, float dt) {
     status_.reason = ctl_.reason();
     status_.out = out;
     status_.motorsHealthy = healthy;
+    status_.inputs = in;
     return out;
 }
 
-TeleopInputs ManualDrive::readInputs(Clock::time_point now) {
-    if (!input_.isOpen() && now >= nextPadTry_) {
-        if (input_.open(opts_.gamepadPath)) {
+TeleopInputs ManualDrive::readInputs() {
+    if (!input_) {
+        std::unique_lock lock(padMutex_, std::try_to_lock);  // never wait on the discovery thread
+        if (lock.owns_lock() && pendingPad_) {
+            input_ = std::move(pendingPad_);
+            lock.unlock();
             publishFact("gamepad", "linkHealthy", "true");
-            std::lock_guard lock(statusMutex_);
+            std::lock_guard sl(statusMutex_);
             status_.padConnected = true;
-            status_.padName = input_.name();
-        } else {
-            nextPadTry_ = now + 1s;
+            status_.padName = input_->name();
         }
     }
     TeleopInputs in;
     in.linkOk = false;
-    if (!input_.isOpen()) return in;
+    if (!input_) return in;
 
-    if (input_.poll(0) == InputDriver::PollResult::LinkLost) {
-        KLOG_WARN(kTag, "gamepad link lost — SAFE STOP");
-        input_.close();
-        nextPadTry_ = now + 1s;
+    if (input_->poll(0) == InputDriver::PollResult::LinkLost) {
+        KLOG_WARN(kTag, "gamepad link lost - SAFE STOP");
+        input_.reset();
+        {
+            std::lock_guard lock(padMutex_);
+            needPad_ = true;
+        }
+        padCv_.notify_all();
         publishFact("gamepad", "linkHealthy", "false");
         std::lock_guard lock(statusMutex_);
         status_.padConnected = false;
         ++status_.padDisconnects;
         return in;
     }
-    const auto& s = input_.state();
+    const auto& s = input_->state();
     in.linkOk = true;
     in.lx = s.axis(ABS_X);
     in.ly = s.axis(ABS_Y);
@@ -150,7 +182,7 @@ void ManualDrive::run() {
         const auto now = Clock::now();
         const float dt = std::chrono::duration<float>(now - prev).count();
         prev = now;
-        step(readInputs(now), dt);
+        step(readInputs(), dt);
         if (watchdog_) watchdog_->kick();
 
         if (++ticks; now - rateT0 >= 1s) {

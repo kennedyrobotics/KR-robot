@@ -1,5 +1,5 @@
 #pragma once
-// Goal — doc v3 §6, "deliberately thin". Posted by L4 (CLIPS `post-goal` UDF, §5.4) or parsed
+// Goal - doc v3 §6, "deliberately thin". Posted by L4 (CLIPS `post-goal` UDF, §5.4) or parsed
 // from operator commands (source=Operator); consumed by L5's GoalArbiter. Defined at L4 so the
 // L4->L5 dependency points the same way as the data.
 

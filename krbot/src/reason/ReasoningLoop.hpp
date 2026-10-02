@@ -1,5 +1,5 @@
 #pragma once
-// L4 thread (doc v3 §7): per tick, strictly phased —
+// L4 thread (doc v3 §7): per tick, strictly phased -
 //   drain FactDelta queue -> syncDelta each -> bounded tick(runLimit) -> (goals already queued by
 //   the reasoner's outputs) . No re-entry of syncDelta during tick.
 
@@ -25,6 +25,7 @@ public:
     IReasoner& reasoner() { return *reasoner_; }
     long long ticks() const { return ticks_; }
     long long saturatedTicks() const { return saturated_; }
+    long long deltasSynced() const { return deltas_synced_; }
 
 private:
     void run();
@@ -36,6 +37,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<long long> ticks_{0};
     std::atomic<long long> saturated_{0};
+    std::atomic<long long> deltas_synced_{0};
     std::thread thread_;
 };
 

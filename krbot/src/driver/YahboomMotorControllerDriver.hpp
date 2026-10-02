@@ -1,5 +1,5 @@
 #pragma once
-// YahboomMotorControllerDriver : IMotorController — doc v3 §2, over USB serial (CH340K) instead
+// YahboomMotorControllerDriver : IMotorController - doc v3 §2, over USB serial (CH340K) instead
 // of I2C (design note §2.3). Thread-safe: setAllChannels/stopAll may be called from the control
 // thread and the watchdog thread concurrently. A background RX thread parses board reports.
 

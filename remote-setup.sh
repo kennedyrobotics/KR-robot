@@ -29,6 +29,30 @@ done
 command -v gio &>/dev/null && gio set "${HOME}/Desktop/krc-robot.desktop" metadata::trusted true 2>/dev/null || true
 echo "    'KR-Robot Control' added to the desktop and application menu"
 
+echo "==> Installing krbot user service + 'KR-bot Monitor' shortcut..."
+mkdir -p "${HOME}/.config/systemd/user"
+install -m 0644 "${APP_DIR}/systemd/krbot.service" "${HOME}/.config/systemd/user/krbot.service"
+systemctl --user daemon-reload 2>/dev/null || echo "    (no user systemd session - run 'systemctl --user daemon-reload' after login)"
+chmod +x "${APP_DIR}/krbot_monitor_gui.py"
+MONITOR_ENTRY="[Desktop Entry]
+Type=Application
+Name=KR-bot Monitor
+Comment=Monitor and control the krbot C++ stack (live status, events, E-STOP, service start/stop)
+Exec=/usr/bin/python3 ${APP_DIR}/krbot_monitor_gui.py
+Icon=${APP_DIR}/images/krbot_console.png
+Terminal=false
+Categories=Development;Engineering;
+StartupNotify=true"
+for f in "${HOME}/Desktop/krbot-monitor.desktop" "${HOME}/.local/share/applications/krbot-monitor.desktop"; do
+  echo "${MONITOR_ENTRY}" > "$f"
+  chmod +x "$f"
+done
+command -v gio &>/dev/null && gio set "${HOME}/Desktop/krbot-monitor.desktop" metadata::trusted true 2>/dev/null || true
+# the terminal console is superseded by the monitor window (script kept for ssh use)
+rm -f "${HOME}/Desktop/krbot-console.desktop" "${HOME}/.local/share/applications/krbot-console.desktop"
+echo "    krbot.service: $(systemctl --user is-enabled krbot 2>/dev/null || echo installed) / $(systemctl --user is-active krbot 2>/dev/null)"
+[ -x "${APP_DIR}/krbot/build/krbot" ] || echo "    krbot not built yet: bash ${APP_DIR}/scripts/build-krbot.sh  (or 'u' in the console)"
+
 echo "==> Checking Python dependencies..."
 python3 -c "import serial; print('    pyserial', serial.__version__)" \
   || echo "    pyserial MISSING — run scripts/sudo-setup.sh"
@@ -45,7 +69,9 @@ echo "==> Checking one-time root setup..."
 cat <<EOF
 
 === Setup complete ===
-  Desktop: double-click "KR-Robot Control"   (or: DISPLAY=:0 python3 ${APP_DIR}/krc_robot_gui.py)
+  Desktop: "KR-bot Monitor"   -> krbot C++ stack (background service): live status, events, E-STOP, start/stop
+  Over ssh: bash ${APP_DIR}/scripts/krbot-console.sh   (terminal view of the same)
+  Desktop: "KR-Robot Control" -> Python bench app (stop krbot first — motor port is exclusive)
   bash ${APP_DIR}/scripts/krc-diag.sh                 # what's connected / what's missing
   ${APP_DIR}/tools/joy_test.py --list                 # gamepad axis ranges
   ${APP_DIR}/tools/joy_test.py                        # live stick/button view

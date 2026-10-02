@@ -33,7 +33,7 @@ std::unique_ptr<DriverRegistry> DriverRegistry::fromConfig(const common::Config&
             reg->motorDesc_ = "yahboom " + drv->port();
             reg->motors_ = std::move(drv);
         } catch (const std::exception& e) {
-            KLOG_ERROR(kTag, "motor board unavailable: {} — running with an UNHEALTHY placeholder", e.what());
+            KLOG_ERROR(kTag, "motor board unavailable: {} - running with an UNHEALTHY placeholder", e.what());
             auto sim = std::make_unique<SimMotorController>();
             sim->setHealthy(false);
             reg->motorDesc_ = std::string("unavailable (") + e.what() + ")";

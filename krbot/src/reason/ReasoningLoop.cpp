@@ -25,11 +25,14 @@ void ReasoningLoop::stop() {
 void ReasoningLoop::run() {
     auto next = std::chrono::steady_clock::now();
     while (running_) {
-        for (const auto& d : deltas_.drain()) reasoner_->syncDelta(d);
+        for (const auto& d : deltas_.drain()) {
+            reasoner_->syncDelta(d);
+            ++deltas_synced_;
+        }
         const auto fired = reasoner_->tick(runLimit_);
         if (fired >= runLimit_) {
             ++saturated_;
-            KLOG_WARN(kTag, "rule run limit {} hit — possible runaway rule pair", runLimit_);
+            KLOG_WARN(kTag, "rule run limit {} hit - possible runaway rule pair", runLimit_);
         }
         ++ticks_;
         next += period_;

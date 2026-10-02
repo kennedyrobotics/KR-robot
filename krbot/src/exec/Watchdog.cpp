@@ -35,11 +35,11 @@ bool Watchdog::check(Clock::time_point now) {
     tripped_ = true;
     ++trips_;
     try {
-        motors_.stopAll();  // direct to L1 — the backstop does not depend on any other thread
+        motors_.stopAll();  // direct to L1 - the backstop does not depend on any other thread
     } catch (const std::exception& e) {
         KLOG_ERROR(kTag, "stopAll failed during trip: {}", e.what());
     }
-    KLOG_ERROR(kTag, "control loop stalled > {} ms — motors stopped", timeout_.count());
+    KLOG_ERROR(kTag, "control loop stalled > {} ms - motors stopped", timeout_.count());
     if (onTrip_) onTrip_("control loop stalled");
     return true;
 }

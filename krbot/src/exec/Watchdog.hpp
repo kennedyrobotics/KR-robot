@@ -1,5 +1,5 @@
 #pragma once
-// L5 heartbeat/watchdog supervisor — doc v3 §6/§7: "a separate, minimal, independently-tested
+// L5 heartbeat/watchdog supervisor - doc v3 §6/§7: "a separate, minimal, independently-tested
 // watchdog thread" and "the only hard safety backstop". It owns no logic beyond: if the control
 // loop stops kicking for `timeout`, call IMotorController::stopAll() directly (independent of the
 // arbiter and the control loop) and report the trip. Re-arming after a trip stays a teleop action.
