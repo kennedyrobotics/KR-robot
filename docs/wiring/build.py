@@ -37,10 +37,12 @@ def build(src: Path) -> None:
     tsv = src.with_suffix(".tsv")
     if tsv.exists():  # WireViz names the BOM <name>.tsv; make its purpose obvious
         tsv.replace(src.with_suffix(".bom.tsv"))
-    svg = src.with_suffix(".svg")
-    # Normalise line endings so the committed SVG diffs cleanly (repo is LF)
-    svg.write_bytes(svg.read_bytes().replace(b"\r\n", b"\n"))
-    print(f"    wrote {svg.name}, {src.with_suffix('.bom.tsv').name}")
+    svg, bom = src.with_suffix(".svg"), src.with_suffix(".bom.tsv")
+    # Normalise line endings so committed outputs diff cleanly (repo is LF; WireViz writes CRLF on Windows)
+    for out in (svg, bom):
+        if out.exists():
+            out.write_bytes(out.read_bytes().replace(b"\r\n", b"\n"))
+    print(f"    wrote {svg.name}, {bom.name}")
 
 
 def main() -> int:
