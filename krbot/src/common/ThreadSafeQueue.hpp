@@ -16,7 +16,7 @@ class ThreadSafeQueue {
 public:
     explicit ThreadSafeQueue(std::size_t capacity = 0) : capacity_(capacity) {}
 
-    // Returns false if closed, or if bounded and full (oldest is kept — callers decide policy).
+    // Returns false if closed, or if bounded and full (oldest is kept - callers decide policy).
     bool push(T value) {
         {
             std::lock_guard lock(m_);

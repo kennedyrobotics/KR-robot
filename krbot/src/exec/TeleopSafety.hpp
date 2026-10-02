@@ -1,5 +1,5 @@
 #pragma once
-// Teleop safety state machine + skid-steer mixing — pure logic, ported 1:1 from krc/drive.py
+// Teleop safety state machine + skid-steer mixing - pure logic, ported 1:1 from krc/drive.py
 // (same unit tests). L5's direct manual path (doc v3 §6).
 //
 //  DISARMED at start-up and after link loss. ARM: START with deadman released + sticks centred.

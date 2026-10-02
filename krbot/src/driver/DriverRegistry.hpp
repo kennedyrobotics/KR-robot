@@ -1,5 +1,5 @@
 #pragma once
-// DriverRegistry — doc v3 §2: owns all L1 driver instances and is the ONLY place concrete
+// DriverRegistry - doc v3 §2: owns all L1 driver instances and is the ONLY place concrete
 // driver types are named. Everything above L1 sees interfaces.
 
 #include "common/Config.hpp"

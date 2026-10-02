@@ -1,5 +1,5 @@
 #pragma once
-// FactStore — doc v3 §4: the single source of truth, owned exclusively by one dedicated thread.
+// FactStore - doc v3 §4: the single source of truth, owned exclusively by one dedicated thread.
 // L2/L4/L5 never lock it; they submit commands through a queue. Every mutation is published as a
 // FactDelta on deltas() (the L3->L4 queue, doc v3 §5.3). SQLite episodic persistence: Phase 4.
 

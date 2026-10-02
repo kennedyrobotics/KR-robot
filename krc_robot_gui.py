@@ -31,94 +31,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from krc import joystick as js  # noqa: E402
 from krc.core import PROFILES, RobotCore, Settings  # noqa: E402
+from krc.ui_theme import (BAD, BG, DIM, ENTRY_BG, GOOD, MODE_COLOURS, MONO, MUTED,  # noqa: E402
+                          PANEL, TEXT, UI, WARN, Bar, StickView, apply_style, button, card_row, section)
 
 APP_DIR = Path(__file__).resolve().parent
 REFRESH_MS = 100
 
-# Palette — same dark theme as the atr-viu-emulator dashboard
-BG = "#1e1e2e"
-PANEL = "#313244"
-ENTRY_BG = "#11111b"
-TEXT = "#cdd6f4"
-MUTED = "#a6adc8"
-ACCENT = "#89b4fa"
-GOOD = "#a6e3a1"
-BAD = "#f38ba8"
-WARN = "#fab387"
-DIM = "#6c7086"
-
-if sys.platform.startswith("win"):
-    UI, MONO = "Segoe UI", "Consolas"
-else:
-    UI, MONO = "DejaVu Sans", "DejaVu Sans Mono"
-
-MODE_COLOURS = {"ARMED": GOOD, "DISARMED": WARN, "ESTOP": BAD}
 STICKS = [("Left stick", js.ABS_X, js.ABS_Y), ("Right stick", js.ABS_RX, js.ABS_RY)]
 TRIGGERS = [("LT", js.ABS_Z), ("RT", js.ABS_RZ)]
 BUTTON_ORDER = [js.BTN_SOUTH, js.BTN_EAST, js.BTN_WEST, js.BTN_NORTH, js.BTN_TL, js.BTN_TR,
                 js.BTN_TL2, js.BTN_TR2, js.BTN_SELECT, js.BTN_START, js.BTN_MODE, js.BTN_THUMBL, js.BTN_THUMBR]
 BUTTON_ROLES = {js.BTN_TL: "deadman", js.BTN_START: "arm", js.BTN_EAST: "e-stop", js.BTN_MODE: "e-stop"}
-
-
-def section(parent: tk.Widget, title: str, **pack) -> tk.LabelFrame:
-    lf = tk.LabelFrame(parent, text=f" {title} ", bg=PANEL, fg=ACCENT, font=(UI, 10, "bold"), padx=10, pady=6)
-    lf.pack(**({"fill": tk.X, "padx": 6, "pady": 4} | pack))
-    return lf
-
-
-def card_row(parent: tk.Widget, label: str, initial: str = "—", width: int = 14) -> tk.Label:
-    row = tk.Frame(parent, bg=PANEL)
-    row.pack(fill=tk.X, pady=1)
-    tk.Label(row, text=label, bg=PANEL, fg=MUTED, font=(UI, 9), width=width, anchor="w").pack(side=tk.LEFT)
-    val = tk.Label(row, text=initial, bg=PANEL, fg=TEXT, font=(MONO, 10), anchor="w")
-    val.pack(side=tk.LEFT, fill=tk.X)
-    return val
-
-
-def button(parent, text, cmd, colour=ACCENT, **kw) -> tk.Button:
-    return tk.Button(parent, text=text, command=cmd, bg=colour, fg=BG, activebackground=TEXT,
-                     font=(UI, 9, "bold"), relief=tk.FLAT, padx=10, pady=3,
-                     takefocus=0, **kw)   # SPACE must only ever mean E-STOP
-
-
-class Bar(tk.Canvas):
-    """Horizontal bar: centred (-1..1) or one-sided (0..1)."""
-
-    def __init__(self, parent, width=220, height=16, one_sided=False):
-        super().__init__(parent, width=width, height=height, bg=ENTRY_BG, highlightthickness=0)
-        self.w, self.h, self.one_sided = width, height, one_sided
-        self.fill = self.create_rectangle(0, 0, 0, height, fill=ACCENT, width=0)
-        if not one_sided:
-            self.create_line(width / 2, 0, width / 2, height, fill=DIM)
-
-    def set(self, v: float, colour: str = ACCENT) -> None:
-        v = max(-1.0, min(1.0, v))
-        if self.one_sided:
-            self.coords(self.fill, 0, 0, max(0.0, v) * self.w, self.h)
-        else:
-            mid = self.w / 2
-            self.coords(self.fill, min(mid, mid + v * mid), 0, max(mid, mid + v * mid), self.h)
-        self.itemconfigure(self.fill, fill=colour)
-
-
-class StickView(tk.Canvas):
-    def __init__(self, parent, size=150):
-        super().__init__(parent, width=size, height=size, bg=ENTRY_BG, highlightthickness=0)
-        self.s = size
-        r = size / 2 - 6
-        c = size / 2
-        self.create_oval(c - r, c - r, c + r, c + r, outline=DIM)
-        self.create_line(c, 6, c, size - 6, fill=PANEL)
-        self.create_line(6, c, size - 6, c, fill=PANEL)
-        self.dot = self.create_oval(c - 7, c - 7, c + 7, c + 7, fill=ACCENT, outline="")
-        self.r = r
-
-    def set(self, x: float, y: float, active: bool) -> None:
-        c = self.s / 2
-        px, py = c + x * self.r, c + y * self.r
-        self.coords(self.dot, px - 7, py - 7, px + 7, py + 7)
-        self.itemconfigure(self.dot, fill=GOOD if active else ACCENT)
-
 
 class KrRobotApp(tk.Tk):
     def __init__(self, core: RobotCore) -> None:
@@ -135,16 +58,7 @@ class KrRobotApp(tk.Tk):
             except tk.TclError:
                 pass
 
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure(".", background=BG, foreground=TEXT, fieldbackground=ENTRY_BG)
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=[14, 5], font=(UI, 10, "bold"), background=PANEL, foreground=MUTED)
-        style.map("TNotebook.Tab", background=[("selected", ACCENT)], foreground=[("selected", BG)])
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=TEXT, font=(UI, 10))
-        style.configure("Title.TLabel", font=(UI, 12, "bold"), foreground=ACCENT)
-        style.configure("TCombobox", fieldbackground=ENTRY_BG, foreground=TEXT, background=PANEL)
+        apply_style(self)
 
         self._log_seen = 0
         self._build_header()
@@ -631,7 +545,6 @@ def main() -> int:
     finally:
         core.shutdown()
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,5 +1,5 @@
 #pragma once
-// RAII raw serial port (termios). Exclusive: flock(LOCK_EX) — the same lock pyserial's
+// RAII raw serial port (termios). Exclusive: flock(LOCK_EX) - the same lock pyserial's
 // `exclusive=True` takes, so the C++ stack, the Python GUI and tools/teleop.py can never
 // drive the motor board at the same time.
 

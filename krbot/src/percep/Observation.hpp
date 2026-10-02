@@ -1,5 +1,5 @@
 #pragma once
-// L2 typed observation — doc v3 §3. Produced by sensor sources, filtered, then mapped to ontology
+// L2 typed observation - doc v3 §3. Produced by sensor sources, filtered, then mapped to ontology
 // terms by ObservationMapper (the only place raw sensor output becomes a fact).
 
 #include "knowledge/Fact.hpp"

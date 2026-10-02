@@ -1,5 +1,5 @@
 #pragma once
-// L3 fact tuple — doc v3 §4: (subject, predicate, object, confidence, timestamp, source, ttl).
+// L3 fact tuple - doc v3 §4: (subject, predicate, object, confidence, timestamp, source, ttl).
 // Shape deliberately mirrors the generic CLIPS `fact` deftemplate (doc v3 §5.2) so the L3->L4
 // sync stays a mechanical translation.
 

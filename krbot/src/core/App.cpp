@@ -1,6 +1,8 @@
 #include "core/App.hpp"
 
+#include "common/Json.hpp"
 #include "common/Log.hpp"
+#include "core/MonitorServer.hpp"
 #include "driver/DriverRegistry.hpp"
 #include "exec/GoalArbiter.hpp"
 #include "exec/ManualDrive.hpp"
@@ -28,6 +30,7 @@ App::~App() { stop(); }
 void App::start() {
     if (started_) return;
     started_ = true;
+    startTime_ = std::chrono::steady_clock::now();
 
     // L1
     drivers_ = driver::DriverRegistry::fromConfig(cfg_);
@@ -62,7 +65,7 @@ void App::start() {
                                                       static_cast<int>(cfg_.getInt("reason.run_limit", 300)));
     reason_->start();
 
-    // L5 — watchdog first so the manual loop is supervised from its first tick
+    // L5 - watchdog first so the manual loop is supervised from its first tick
     watchdog_ = std::make_unique<exec::Watchdog>(
         motors, std::chrono::milliseconds(cfg_.getInt("watchdog.timeout_ms", 200)),
         [this](const char* why) {
@@ -93,8 +96,9 @@ void App::start() {
     manual_->start();
     arbiterRunning_ = true;
     arbiterThread_ = std::thread([this] { arbiterLoop(); });
+    startMonitor();
 
-    KLOG_INFO(kTag, "krbot started — motors: {}", drivers_->motorDescription());
+    KLOG_INFO(kTag, "krbot started - motors: {}", drivers_->motorDescription());
 }
 
 void App::arbiterLoop() {
@@ -102,6 +106,12 @@ void App::arbiterLoop() {
     auto next = std::chrono::steady_clock::now();
     while (arbiterRunning_) {
         arbiter_->tick();
+        {
+            const auto g = arbiter_->activeGoal();
+            std::lock_guard lock(goalMutex_);
+            goalSummary_ = g ? GoalSummary{g->type, g->target, arbiter_->activeTaskId(), g->priority, arbiter_->pendingCount()}
+                             : GoalSummary{"", "", "", 0, arbiter_->pendingCount()};
+        }
         next += period;
         std::this_thread::sleep_until(next);
     }
@@ -125,7 +135,72 @@ void App::stop() {
         } catch (...) {
         }
     }
-    KLOG_INFO(kTag, "stopped — motors zeroed");
+    KLOG_INFO(kTag, "stopped - motors zeroed");
+    if (monitor_) {
+        common::setLogSink({});  // before the server goes away
+        monitor_->stop();
+        monitor_.reset();
+    }
+}
+
+void App::startMonitor() {
+    if (!cfg_.getBool("monitor.enabled", true)) return;
+    MonitorServer::Options o;
+    o.bind = cfg_.getString("monitor.bind", o.bind);
+    o.port = static_cast<uint16_t>(cfg_.getInt("monitor.port", o.port));
+    o.rateHz = static_cast<int>(cfg_.getInt("monitor.rate_hz", o.rateHz));
+    monitor_ = std::make_unique<MonitorServer>(
+        o, [this] { return snapshotJson(); },
+        [this](const std::string& cmd, const std::string& peer) -> std::string {
+            if (cmd == "estop") {
+                KLOG_WARN(kTag, "E-STOP requested by monitor client {}", peer);
+                requestEstop("monitor e-stop");
+                return R"({"type":"ack","cmd":"estop"})";
+            }
+            if (cmd == "ping") return R"({"type":"pong"})";
+            return {};
+        });
+    try {
+        monitor_->start();
+    } catch (const std::exception& e) {
+        KLOG_ERROR(kTag, "monitor server disabled: {}", e.what());  // robot keeps running without it
+        monitor_.reset();
+        return;
+    }
+    auto* srv = monitor_.get();
+    common::setLogSink([srv](common::LogLevel lvl, const std::string& line) { srv->publishLog(common::toString(lvl), line); });
+    KLOG_INFO(kTag, "monitor server on {}:{}", o.bind, srv->port());
+}
+
+std::string App::snapshotJson() const {
+    namespace json = common::json;
+    if (!manual_) return R"("mode":"STARTING")";
+    const auto s = manual_->status();
+    GoalSummary g;
+    {
+        std::lock_guard lock(goalMutex_);
+        g = goalSummary_;
+    }
+    const auto& in = s.inputs;
+    const double uptime = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime_).count();
+    const bool dry = cfg_.getString("motor.driver", "yahboom") == "sim";
+    return std::format(
+        R"("version":"0.1.0","uptime_s":{:.1f},"dry_run":{},"mode":{},"mode_reason":{},)"
+        R"("out":{{"left":{},"right":{}}},"max_output":{},)"
+        R"("inputs":{{"lx":{:.3f},"ly":{:.3f},"rx":{:.3f},"ry":{:.3f},"deadman":{},"arm":{},"estop":{},"link":{}}},)"
+        R"("gamepad":{{"connected":{},"name":{},"disconnects":{}}},)"
+        R"("motors":{{"healthy":{},"desc":{}}},"loop_hz":{:.1f},)"
+        R"("watchdog":{{"trips":{},"timeout_ms":{}}},"facts":{},)"
+        R"("reasoner":{{"ticks":{},"saturated":{},"deltas":{}}},)"
+        R"("goal":{{"type":{},"target":{},"task":{},"priority":{},"pending":{}}},"monitor_clients":{})",
+        uptime, json::boolean(dry), json::quote(exec::toString(s.mode)), json::quote(s.reason), s.out.left,
+        s.out.right, cfg_.getInt("teleop.max_output", 1800), in.lx, in.ly, in.rx, in.ry, json::boolean(in.deadman),
+        json::boolean(in.arm), json::boolean(in.estop), json::boolean(in.linkOk), json::boolean(s.padConnected),
+        json::quote(s.padName), s.padDisconnects, json::boolean(s.motorsHealthy),
+        json::quote(drivers_ ? drivers_->motorDescription() : ""), s.loopHz, watchdog_ ? watchdog_->trips() : 0,
+        cfg_.getInt("watchdog.timeout_ms", 200), facts_ ? facts_->size() : 0, reason_ ? reason_->ticks() : 0,
+        reason_ ? reason_->saturatedTicks() : 0, reason_ ? reason_->deltasSynced() : 0, json::quote(g.type),
+        json::quote(g.target), json::quote(g.task), g.priority, g.pending, monitor_ ? monitor_->clientCount() : 0);
 }
 
 void App::requestEstop(const char* reason) {

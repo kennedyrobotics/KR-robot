@@ -1,5 +1,5 @@
 #pragma once
-// Single-threaded fact table — the logic inside FactStore, separated so it is unit-testable.
+// Single-threaded fact table - the logic inside FactStore, separated so it is unit-testable.
 // Indexed by subject and predicate (doc v3 §4: unordered_multimap on subject and predicate).
 // Every mutation returns the FactDelta(s) to publish to L4.
 

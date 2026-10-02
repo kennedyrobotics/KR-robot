@@ -24,7 +24,7 @@ bool testBit(const uint8_t* bits, int n) { return bits[n / 8] & (1u << (n % 8));
 
 bool AxisInfo::oneSided() const {
     // Triggers: xpad / hid-playstation report Z/RZ 0..255, BLE Xbox 0..1023. Xbox-over-BT without
-    // xpadneo puts the right stick on Z/RZ at 0..65535 — the range check keeps that centred.
+    // xpadneo puts the right stick on Z/RZ at 0..65535 - the range check keeps that centred.
     const bool trigger = std::find(std::begin(kTriggerAxes), std::end(kTriggerAxes), code) != std::end(kTriggerAxes);
     return trigger && minimum >= 0 && maximum <= 1023;
 }

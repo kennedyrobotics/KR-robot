@@ -1,5 +1,5 @@
 #pragma once
-// L5 InputDriver — gamepad via raw Linux evdev (ported from krc/joystick.py). Works for the SN2403
+// L5 InputDriver - gamepad via raw Linux evdev (ported from krc/joystick.py). Works for the SN2403
 // wired (xpad) and over BLE (hid-microsoft / uhid). Axis ranges come from EVIOCGABS so every mode
 // normalises to -1..+1 (sticks) or 0..1 (triggers). Device loss -> PollResult::LinkLost, which the
 // caller must treat as a safe-stop (doc v3 §6 / design note §6.2).

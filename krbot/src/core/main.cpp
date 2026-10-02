@@ -1,9 +1,10 @@
-// krbot — KR-bot 5-layer C++ stack entry point.
+// krbot - KR-bot 5-layer C++ stack entry point.
 //
 //   krbot [--config=/path/krbot.conf] [--dry-run] [--motor.port=/dev/krc-motor]
 //         [--teleop.max_output=1200] [--input.device=/dev/input/event5] [--log=debug]
 //
 // Any config key can be overridden as --section.key=value. SIGINT/SIGTERM -> motors zeroed, exit 0.
+// SIGUSR1 -> latched E-STOP (re-arm only from the gamepad), process keeps running.
 
 #include "common/Config.hpp"
 #include "common/Log.hpp"
@@ -19,7 +20,9 @@
 
 namespace {
 volatile std::sig_atomic_t g_stop = 0;
+volatile std::sig_atomic_t g_estop = 0;
 void onSignal(int) { g_stop = 1; }
+void onEstopSignal(int) { g_estop = 1; }  // SIGUSR1: external e-stop (KR-bot Console, systemctl kill)
 
 std::string defaultConfigPath(const char* argv0) {
     namespace fs = std::filesystem;
@@ -57,10 +60,11 @@ int main(int argc, char** argv) {
     for (const auto& unknown : cfg.applyArgs(args)) std::fprintf(stderr, "ignoring argument: %s\n", unknown.c_str());
     if (cfg.getBool("dry-run", false)) cfg.set("motor.driver", "sim");
     krbot::common::setLogLevel(krbot::common::parseLogLevel(cfg.getString("log", "info")));
-    KLOG_INFO("main", "krbot 0.1.0 — config: {}", cfgPath.empty() ? "(defaults)" : cfgPath);
+    KLOG_INFO("main", "krbot 0.1.0 - config: {}", cfgPath.empty() ? "(defaults)" : cfgPath);
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
+    std::signal(SIGUSR1, onEstopSignal);
 
     krbot::core::App app(cfg);
     app.start();
@@ -68,6 +72,11 @@ int main(int argc, char** argv) {
     auto nextStatus = std::chrono::steady_clock::now();
     while (!g_stop) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (g_estop) {
+            g_estop = 0;
+            app.requestEstop("external e-stop (SIGUSR1)");
+            app.logStatus();
+        }
         if (std::chrono::steady_clock::now() >= nextStatus) {
             app.logStatus();
             nextStatus += statusEvery;

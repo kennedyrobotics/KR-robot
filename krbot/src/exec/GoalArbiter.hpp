@@ -1,5 +1,5 @@
 #pragma once
-// GoalArbiter — doc v3 §6. Each tick: drain the goal queue; if the best pending goal beats the
+// GoalArbiter - doc v3 §6. Each tick: drain the goal queue; if the best pending goal beats the
 // active one by more than the hysteresis margin, halt the active executor and switch; otherwise
 // tick the active executor. On Success/Failure, report a TaskOutcome fact (source=Execution) to L3
 // and fall back to the next pending goal (or idle). Single-threaded: called from the L5 tick loop.

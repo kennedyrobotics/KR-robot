@@ -1,0 +1,31 @@
+# KR-bot 5-layer C++ stack — systemd USER unit (runs as beagle, no sudo needed to control it).
+# Installed to ~/.config/systemd/user/ by remote-setup.sh. Not enabled until bench-tested:
+#   systemctl --user start|stop|restart krbot      # or use the "KR-bot Console" desktop icon
+#   systemctl --user enable krbot                  # start at login (Xfce autologin = at boot)
+#   sudo loginctl enable-linger beagle             # optional: start at boot even with no login
+#   journalctl --user -u krbot -f                  # follow the log
+#   systemctl --user kill -s USR1 krbot            # latched E-STOP (re-arm from the gamepad)
+#
+# Dry run (simulated motors, real gamepad):
+#   systemctl --user set-environment KRBOT_ARGS=--dry-run && systemctl --user restart krbot
+#   systemctl --user unset-environment KRBOT_ARGS          # back to the real motor board
+#
+# The motor port is exclusive (flock): stop this service before using the Python
+# "KR-Robot Control" app or tools/teleop.py, and vice versa.
+
+[Unit]
+Description=KR-bot 5-layer control stack (krbot)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/krc-robot/krbot/build/krbot $KRBOT_ARGS
+# SIGINT and SIGTERM both run the safety-first shutdown (motors zeroed first)
+KillSignal=SIGINT
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=2
+# comes back DISARMED after any restart (teleop state machine), so auto-restart is safe
+
+[Install]
+WantedBy=default.target
