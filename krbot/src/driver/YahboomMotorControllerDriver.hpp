@@ -20,8 +20,8 @@ public:
     enum class Mode { Pwm, Speed };  // Pwm = open loop (no encoders); Speed = closed loop
 
     struct Options {
-        std::string port = "/dev/krc-motor";
-        std::string fallbackPort = "/dev/ttyUSB0";
+        std::string port = "/dev/ttyAMA0";          // header UART (wiring-manual §5.1b)
+        std::string fallbackPort = "/dev/krc-motor";  // USB-C link
         std::string pwmKeyword = "pwm";    // UNVERIFIED
         std::string speedKeyword = "spd";  // UNVERIFIED (some sources: "speed")
         int maxOutput = 1800;              // clamp, PWM counts (bench default ~50 %)

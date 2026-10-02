@@ -1,0 +1,133 @@
+# KR-Robot motor drive wiring — BeagleY-AI -> Yahboom YB-ESF01 -> track motors, plus Yahboom power.
+# Source for docs/wiring/krc-motor-drive.svg (WireViz 0.4). Regenerate: python docs/wiring/build.py
+#
+# As built 2026-10-02: motor link on the header UART (wiring-manual §5.1b), verified working
+# ($upload/$MAll and $pwm on M1/M2). Items marked TO VERIFY are not yet physically confirmed —
+# update them (and the notes) when checked, then regenerate.
+#
+# Designators: X = connector/terminal, W = cable/wire, F = fuse, S = switch.
+
+metadata:
+  title: KR-Robot motor drive wiring
+  description: BeagleY-AI header UART to Yahboom YB-ESF01, Yahboom to track motors, battery to Yahboom
+  revision: A (2026-10-02)
+
+options:
+  fontname: Arial
+  bgcolor: WH
+  color_mode: SHORT
+
+connectors:
+  # ---------------------------------------------------------------- BeagleY-AI
+  X1:
+    type: BeagleY-AI 40-pin header (2.54 mm)
+    subtype: female Dupont on lead
+    pins: [6, 8, 10]
+    pinlabels: [GND, "TXD  GPIO14 (UART1)", "RXD  GPIO15 (UART1)"]
+    notes: |
+      /dev/ttyAMA0 → ttyS3, 115200 8N1
+      overlay: k3-am67a-beagley-ai-uart-ttyama0
+      3.3 V logic ONLY - not 5 V tolerant
+
+  # ---------------------------------------------------------------- Yahboom board
+  # One connector for the whole board so the diagram reads BeagleY-AI -> controller -> motors.
+  X2:
+    type: Yahboom YB-ESF01-V2.0 motor driver
+    subtype: STM32F103 + 4x AT8236
+    pins: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    pinlabels:
+      - "UART 5V  (NOT CONNECTED)"
+      - UART GND
+      - UART TX2
+      - UART RX2
+      - "M1+  (left track)"
+      - "M1−"
+      - "M2+  (right track)"
+      - "M2−"
+      - "PWR +  (5–12 V)"
+      - "PWR −"
+    notes: |
+      UART: 4-pin header, order per design note §2.2 (silkscreen TO VERIFY); TX2 idle ≤ 3.3 V (TC-A-05)
+      M1/M2: 2-pin motor ports (type TO VERIFY), NOT the 6-pin encoder headers; M3/M4 unused
+      PWR: 2-way screw terminal. 2S LiPo = 6.0–8.4 V
+      Software: $pwm:M1,M2,0,0# at 50 Hz; left_channel=1, right_channel=2
+
+  # ---------------------------------------------------------------- motors
+  X6:
+    type: Left track motor
+    subtype: 33GB-520-18.7, no encoder
+    pinlabels: [M+, M-]
+    notes: "Separate the joined XT30 leads"
+
+  X7:
+    type: Right track motor
+    subtype: 33GB-520-18.7, no encoder
+    pinlabels: [M+, M-]
+    notes: "invert_right = true (direction TO VERIFY, TC-F-05)"
+
+  # ---------------------------------------------------------------- power
+  X8:
+    type: Battery 2S LiPo 7.4 V 5400 mAh
+    subtype: T-plug (Deans)
+    pinlabels: [+, "-"]
+    notes: LV alarm on the balance lead (JST-XH)
+
+
+cables:
+  W1:
+    type: UART lead
+    wirecount: 3
+    gauge: 26 AWG
+    colors: [BK, OG, YE]
+    wirelabels: [GND, "BeagleY TX → Yahboom RX2", "Yahboom TX2 → BeagleY RX"]
+    notes: Colours suggested - record as-built. Keep short, away from motor leads
+
+  W2:
+    type: Left motor lead
+    wirecount: 2
+    gauge: 20 AWG
+    colors: [RD, BK]
+
+  W3:
+    type: Right motor lead
+    wirecount: 2
+    gauge: 20 AWG
+    colors: [RD, BK]
+
+  W4:
+    type: "Power feed (+ via F1 fuse, S1 switch)"
+    wirecount: 2
+    gauge: 16 AWG
+    colors: [RD, BK]
+    wirelabels: ["+  → F1 → S1 →", "−  (ground star)"]
+    notes: |
+      F1 ~10 A inline fuse and S1 main switch in the + wire, in that order
+      S1 output also feeds the 5 V buck for the BeagleY-AI (power diagram, TBD)
+    additional_components:
+      - type: Inline blade fuse holder + ~10 A fuse (F1)
+        qty: 1
+      - type: Main power switch, ≥ 10 A DC (S1)
+        qty: 1
+
+connections:
+  # H1: UART link - crossed TX/RX plus ground; Yahboom UART 5V (pin 1) deliberately not connected
+  -
+    - X1: [6, 8, 10]
+    - W1: [1, 2, 3]
+    - X2: [2, 4, 3]
+
+  # H2/H3: Yahboom M1 -> left motor, M2 -> right motor
+  -
+    - X2: [5, 6]
+    - W2: [1, 2]
+    - X6: [1, 2]
+  -
+    - X2: [7, 8]
+    - W3: [1, 2]
+    - X7: [1, 2]
+
+  # H4: battery -> Yahboom power terminal (F1 fuse + S1 switch in the + wire, see W4)
+  -
+    - X8: [1, 2]
+    - W4: [1, 2]
+    - X2: [9, 10]

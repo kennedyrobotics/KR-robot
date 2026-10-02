@@ -1,0 +1,12 @@
+Id	Description	Qty	Unit	Designators
+1	Cable, Left motor lead, 2 x 20 AWG	0	m	W2
+2	Cable, Power feed (+ via F1 fuse, S1 switch), 2 x 16 AWG	0	m	W4
+3	Cable, Right motor lead, 2 x 20 AWG	0	m	W3
+4	Cable, UART lead, 3 x 26 AWG	0	m	W1
+5	Connector, Battery 2S LiPo 7.4 V 5400 mAh, T-plug (Deans), 2 pins	1		X8
+6	Connector, BeagleY-AI 40-pin header (2.54 mm), female Dupont on lead, 3 pins	1		X1
+7	Connector, Left track motor, 33GB-520-18.7, no encoder, 2 pins	1		X6
+8	Connector, Right track motor, 33GB-520-18.7, no encoder, 2 pins	1		X7
+9	Connector, Yahboom YB-ESF01-V2.0 motor driver, STM32F103 + 4x AT8236, 10 pins	1		X2
+10	Inline blade fuse holder + ~10 A fuse (F1)	1		W4
+11	Main power switch, ≥ 10 A DC (S1)	1		W4

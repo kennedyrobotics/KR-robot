@@ -32,8 +32,8 @@ import serial  # python3-serial (pyserial 3.5) — already on the BeagleY-AI ima
 
 log = logging.getLogger(__name__)
 
-DEFAULT_PORT = "/dev/krc-motor"      # udev symlink, falls back to /dev/ttyUSB0
-FALLBACK_PORT = "/dev/ttyUSB0"
+DEFAULT_PORT = "/dev/ttyAMA0"        # header UART pins 8/10 (wiring-manual §5.1b)
+FALLBACK_PORT = "/dev/krc-motor"     # USB-C link (udev symlink)
 BAUD = 115200
 PWM_FULL_SCALE = 3600                # UNVERIFIED — see module docstring
 INIT_STEP_DELAY_S = 0.1              # Yahboom reference code waits ~100 ms between config commands
