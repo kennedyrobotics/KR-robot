@@ -1,12 +1,19 @@
 # KR-Robot
 
-KR-Robot is a skid-steer tracked robot. A BeagleY-AI (TI AM67A, Debian 13) runs all the software, and a Yahboom STM32 co-processor drives the motors. This repo holds the software architecture, the design decisions behind it, and the bring-up tooling for Phase 0–1: motor board and joystick teleop.
+KR-Robot is a skid-steer tracked robot. A BeagleY-AI (TI AM67A, Debian 13) runs all the software, and a Yahboom STM32 co-processor drives the motors. This repo holds:
+
+- the production **C++ 5-layer stack**, `krbot`
+- its monitoring client
+- the Python bench tools
+- the architecture and the design decisions behind it
 
 > **Status (2026-10-02):** Phase 0–1.
 >
-> - The Python bring-up tooling and the desktop app are deployed. The SN2403 is verified wired (xpad), and onboard BLE is enabled.
-> - The first increment of the **C++ 5-layer stack** ([krbot/](krbot/)) builds on the target, and its 39 unit tests pass.
-> - Next: verify the motor board's serial protocol on the bench ([docs/bringup.md](docs/bringup.md)), then add CLIPS and BehaviorTree.CPP (Phase 1).
+> - The **C++ 5-layer stack** ([krbot/](krbot/)) runs as a systemd user service. Its 50 Hz manual-drive path, watchdog and goal arbiter work, and all 43 unit tests pass on the target.
+> - **KR-bot Monitor** ([§7.1](#71-kr-bot-monitor-monitoring-the-c-stack)) is its client/server monitoring window. It runs on the BeagleY-AI desktop, or on the PC through an SSH tunnel.
+> - The Python bench tooling and the **KR-Robot Control** app are deployed.
+> - The SN2403 is verified wired (xpad). Onboard BLE is enabled and survives a reboot.
+> - **Next:** verify the motor board's serial protocol on the bench ([docs/bringup.md](docs/bringup.md)). Then Phase 1: CLIPS and BehaviorTree.CPP.
 
 ---
 
@@ -16,6 +23,7 @@ KR-Robot is a skid-steer tracked robot. A BeagleY-AI (TI AM67A, Debian 13) runs 
 flowchart LR
     subgraph Operator
         PAD[SN2403 gamepad<br/>USB / Bluetooth]
+        MON[KR-bot Monitor<br/>board desktop or PC]
     end
     subgraph BeagleY-AI ["BeagleY-AI — krbot (C++20, L1–L5)"]
         L5[L5 Execution & Operator Interface<br/>GoalArbiter, BT executor, InputDriver, watchdog]
@@ -30,6 +38,7 @@ flowchart LR
         MR[Right track motor M2]
     end
     PAD -- evdev --> L5
+    MON <-- "status 10 Hz / E-STOP<br/>TCP 127.0.0.1:5765" --> L5
     L5 -- "manual drive + e-stop<br/>(direct path)" --> L1
     L4 -- goals --> L5
     L3 <-- "facts / deltas" --> L4
@@ -61,13 +70,16 @@ The authoritative design is **Design doc v3**, "KR-bot Agentic Software Architec
 | **L2 Perception / Sensing** | Turn raw readings into observations, filter them, and map them to facts | `percep/`: `PerceptionLoop`, `ObservationMapper`, `MotorHealthSource` | Skeleton. Motor-link health only |
 | **L3 Knowledge / World Model** | `FactStore`, the single source of truth, owned by its own thread | `knowledge/`: `FactTable`, `FactStore` | Working in memory. SQLite persistence is Phase 4 |
 | **L4 Reasoning / Planning** | CLIPS rule engine that posts goals | `reason/`: `IReasoner`, `ReasoningLoop`, `NullReasoner` | Stub. `ClipsEngine` arrives in Phase 1 |
-| **L5 Execution & Operator Interface** | BT.CPP execution, GoalArbiter, gamepad, watchdog | `exec/`: `ManualDrive`, `TeleopSafety`, `InputDriver`, `Watchdog`, `GoalArbiter` | **Real** for teleop and the watchdog. BT executor is a stub |
+| **L5 Execution & Operator Interface** | BT.CPP execution, GoalArbiter, gamepad, watchdog | `exec/`: `ManualDrive`, `TeleopSafety`, `InputDriver`, `Watchdog`, `GoalArbiter` | **Real** for teleop, the watchdog and the arbiter. BT executor is a stub |
+| core (wiring) | Lifecycle, config, observability | `core/`: `App`, `MonitorServer`, `main` | **Real.** Safety-first shutdown order and the monitor server |
 
 ### 2.1 Direct path for manual drive and e-stop
 
 Manual drive and e-stop go **straight from L5 to L1** (`ManualDrive`), bypassing L3/L4 and the goal arbiter. A fault or stall in the autonomy stack therefore cannot block a stop command.
 
 An independent `Watchdog` thread backs this up. If the control loop stops ticking for 200 ms, the watchdog calls `IMotorController::stopAll()` directly.
+
+The control loop never blocks on I/O. Gamepad discovery runs on its own thread, because scanning `/dev/input` wakes autosuspended USB devices, and doing that on the control thread cost about 3 ticks per second. The loop holds 50.0 Hz.
 
 ### 2.2 Language strategy
 
@@ -87,7 +99,7 @@ The board can use **either** I2C or UART, not both at once. We use **USB-C to th
 - it avoids uncertainty about the I2C pull-ups
 - a udev rule gives the board a stable name, `/dev/krc-motor`, so `ttyUSB` renumbering never matters.
 
-The architecture doc's §2/§8 still assume raw `ioctl` I2C via `I2CDevice`. That is an open item to update.
+Design doc v3 §2/§8 still assume raw `ioctl` I2C via `I2CDevice`. This is recorded as deviation D1 in [docs/system-design.md](docs/system-design.md) §7, and should be folded back into doc v3.
 
 ### 3.2 Protocol
 
@@ -116,15 +128,17 @@ ASCII frames `$cmd:args#` at 115200 8N1. Init sequence, with ~100 ms between com
 
 1. **Bluetooth, PC mode, onboard BeagleY-AI radio.** The pad advertises as "Xbox Wireless Controller".
    - **Confirmed 2026-10-01:** the onboard CC3301 is BLE-only (`btmgmt` reports `le` but no `br/edr`).
-   - TI's cc33xx driver leaves BLE off (debugfs `ble_enable=0`), so no `hci0` ever appears. [systemd/krc-ble-enable.service](systemd/krc-ble-enable.service) turns it on at boot.
+   - TI's cc33xx driver leaves BLE off (debugfs `ble_enable=0`), so no `hci0` ever appears. [systemd/krc-ble-enable.service](systemd/krc-ble-enable.service) turns it on at boot. A full reboot test on 2026-10-02 confirmed `hci0` comes up. The details are in [notes/bluetooth-debugging.md](notes/bluetooth-debugging.md).
    - Pair with [scripts/bt-pair-gamepad.sh](scripts/bt-pair-gamepad.sh). This works only if the pad's Xbox emulation uses BLE, as Series-style controllers do.
 2. **USB Bluetooth Classic dongle.** Pad in PS4 or Switch mode, using `hid-playstation` / `hid-nintendo`.
 3. **8BitDo USB Wireless Adapter 2.** The pad appears as a wired Xbox pad (`xpad`).
 4. **Wired USB, XInput (`xpad`).** Used for bench work now. Verified 2026-10-01: the pad enumerates as `045e:028e` "Microsoft X-Box 360 pad" and supports rumble. It needs a USB data cable in a USB-A port.
 
-All the required kernel modules (`xpad`, `hid-playstation`, `hid-nintendo`, `btusb`, `uinput`, `ch341`) are present in the stock `6.1.83-ti-arm64` kernel. [krc/joystick.py](krc/joystick.py) reads the axis ranges from the kernel, so every mode normalises to the same −1..+1 values.
+All the required kernel modules (`xpad`, `hid-playstation`, `hid-nintendo`, `btusb`, `uinput`, `ch341`) are present in the stock `6.1.83-ti-arm64` kernel. Both input drivers read the axis ranges from the kernel, so every mode normalises to the same −1..+1 values: [krc/joystick.py](krc/joystick.py) in Python and `exec/InputDriver` in C++.
 
-### 4.2 Teleop safety state machine ([krc/drive.py](krc/drive.py))
+### 4.2 Teleop safety state machine
+
+It is implemented twice with identical behaviour and the same test cases: [krc/drive.py](krc/drive.py) (Python) and `krbot/src/exec/TeleopSafety` (C++).
 
 ```mermaid
 stateDiagram-v2
@@ -134,7 +148,7 @@ stateDiagram-v2
     DISARMED --> ESTOP: B or HOME
     ESTOP --> ARMED: START (LB released, sticks centred)
     ARMED --> DISARMED: link lost (pad ENODEV / read error)
-    ARMED --> ESTOP: GUI E-STOP / motor link lost
+    ARMED --> ESTOP: GUI / monitor / SIGUSR1 E-STOP, watchdog trip, motor fault
 ```
 
 ESTOP stays latched through a gamepad link loss, because it is stricter than DISARMED.
@@ -142,9 +156,13 @@ ESTOP stays latched through a gamepad link loss, because it is stricter than DIS
 - **Deadman:** output is non-zero only while LB is held. Releasing LB zeroes the output instantly, with no slew.
 - **Stopping is easy, re-arming is deliberate.** E-stop latches. Re-arming requires releasing everything and then pressing START.
 - **Link loss means a safe stop.** A pad unplug, a Bluetooth drop, or the pad's 5-minute auto-sleep raises `ENODEV`, which disarms the robot. Reconnection is automatic but always comes back DISARMED.
-- **Motor link loss** (a serial error) stops the robot and exits teleop.
+- **Motor link loss** (a serial error):
+  - In `krbot`, it **holds ESTOP every tick**. START cannot arm until the board is healthy again, and nothing is written to an unhealthy controller.
+  - In Python `tools/teleop.py`, it exits, and systemd restarts it DISARMED.
+- **Watchdog (`krbot`).** If the 50 Hz loop stalls for more than 200 ms, the motors are stopped directly from a separate thread and ESTOP latches.
+- **External E-STOP** comes from the desktop apps (SPACE / ESC / red button), the KR-bot Monitor protocol, or `SIGUSR1`. No external source can **arm**: arming is gamepad-only.
 - The output is re-sent at 50 Hz, the ramp-up is slew-limited, and pivot turns are scaled to 60 % because pivots load the AT8236 drivers hard.
-- The bench default caps PWM at `max_pwm=1800`, about 50 % of the assumed full scale, until the full scale is verified.
+- The bench default caps the output at 1800, about 50 % of the assumed full scale, until the full scale is verified (`teleop.max_output` in `krbot.conf`, `max_pwm` in the Python app).
 
 ### 4.3 Future haptics
 
@@ -180,7 +198,52 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 
 ---
 
-## 7. Desktop app: KR-Robot Control
+## 7. Desktop apps and runtime
+
+| App / service | What it is | Runs |
+|---|---|---|
+| **KR-bot Monitor** ([krbot_monitor_gui.py](krbot_monitor_gui.py)) | Client for the production C++ stack: live status, events, E-STOP and service control | Board desktop icon, or the PC via `scripts\monitor-from-pc.ps1` |
+| **KR-Robot Control** ([krc_robot_gui.py](krc_robot_gui.py)) | Python bench app: teleop, bench pulse, protocol tools | Board desktop icon |
+| `krbot.service` (systemd **user** unit) | The C++ stack running headless | Started from the monitor or with `systemctl --user`. **Not enabled at boot** until bench-tested |
+| `krc-teleop.service` | Headless Python teleop (`tools/teleop.py`) | Installed, not enabled. Superseded by `krbot.service` |
+| `krc-ble-enable.service` | Turns on the CC3301's BLE so `hci0` appears | Enabled at boot |
+
+The motor serial port is exclusive (`flock`), so **only one of `krbot`, KR-Robot Control or `tools/teleop.py` can drive the robot at a time**.
+
+### 7.1 KR-bot Monitor: monitoring the C++ stack
+
+`krbot` is the **server** and KR-bot Monitor is the **client**. They talk over line-delimited JSON on TCP `127.0.0.1:5765`. The full protocol is in [docs/system-design.md](docs/system-design.md) §6a.
+
+```mermaid
+flowchart LR
+    subgraph Robot ["BeagleY-AI"]
+        K["krbot (systemd --user)<br/>core::MonitorServer"]
+        M1["KR-bot Monitor<br/>(desktop icon)"]
+    end
+    PC["KR-bot Monitor on the PC<br/>scripts\monitor-from-pc.ps1"]
+    K -- "hello, log replay,<br/>status 10 Hz, live log" --> M1
+    M1 -- "estop / ping" --> K
+    PC <-. "SSH tunnel<br/>localhost:15765 → 127.0.0.1:5765" .-> K
+    M1 -- "systemctl --user<br/>start/stop/dry-run/boot" --> K
+```
+
+| Tab | What it shows / does |
+|---|---|
+| **Overview** | Mode banner and deadman state. Cards for the server (uptime, version, dry-run), the gamepad and the motor board (watchdog trips). Live track PWM bars, and a **5-layer panel** (L5 loop and goal, L4 ticks and deltas, L3 fact count, L2 sources, L1 driver health) |
+| **Inputs** | Both sticks, plus the deadman / arm / e-stop / link state exactly as `krbot`'s control loop received them |
+| **Events** | Live log with level colours, follow, save. The periodic status lines are hidden by default |
+| **Service** | Start, Start DRY RUN, Stop, Restart, Boot on/off, Rebuild. These are local only; the tab is disabled when monitoring a remote host |
+
+**Safety model:**
+
+- SPACE, ESC and the red button send **E-STOP**. The server's only other command is `ping`, so there is **no remote arm**.
+- Closing the monitor never affects the robot.
+- A client that stops reading is dropped by the server, so it can never slow the 50 Hz loop.
+- The server binds to localhost only, and remote access goes through SSH. Binding it to the LAN needs an auth token first (open item).
+
+For SSH sessions there is also a terminal view: `bash ~/krc-robot/scripts/krbot-console.sh`.
+
+### 7.2 KR-Robot Control (Python bench app)
 
 [krc_robot_gui.py](krc_robot_gui.py) is a tkinter app that runs on the BeagleY-AI desktop. Its layout and dark theme match the atr-viu-emulator dashboard. `deploy.ps1` installs a **KR-Robot Control** shortcut on the Xfce desktop and in the application menu.
 
@@ -212,28 +275,34 @@ Safety rules in the GUI:
 
 `--dry-run` runs the GUI with joystick input only and never opens the motor port.
 
----
-
 ## 8. Repo layout
 
 | Path | Contents |
 |---|---|
-| [krc_robot_gui.py](krc_robot_gui.py), [images/](images/) | Desktop app and its icon |
-| [krbot/](krbot/) | **C++20 5-layer stack** (production). `src/{driver,percep,knowledge,reason,exec,core}`, GoogleTest tests, `config/krbot.conf`. Build with `scripts/build-krbot.sh` |
-| [krc/](krc/) | Python reference drivers: `yahboom.py` (L1), `joystick.py` and `drive.py` (L5), and `core.py` (the shared 50 Hz control loop) |
+| [krbot/](krbot/) | **C++20 5-layer stack** (production). `src/{common,driver,percep,knowledge,reason,exec,core}`, `config/krbot.conf`, GoogleTest tests (43). Build with `scripts/build-krbot.sh` |
+| [krbot_monitor_gui.py](krbot_monitor_gui.py) | **KR-bot Monitor**, the client for krbot's monitor server. Runs on the board or the PC |
+| [krc_robot_gui.py](krc_robot_gui.py) | **KR-Robot Control**, the Python bench app |
+| [krc/](krc/) | Python modules:<br/>- `yahboom.py` (L1)<br/>- `joystick.py` and `drive.py` (L5)<br/>- `core.py` (the bench app's 50 Hz loop)<br/>- `monitor_client.py` (krbot protocol client)<br/>- `ui_theme.py` (shared look of both apps) |
 | [tools/](tools/) | Bench CLIs: `joystick-controller-debug.py`, `joy_test.py`, `yahboom_probe.py`, `teleop.py` |
-| [tests/](tests/) | Hardware-free unit tests. Run `python -m unittest discover -s tests` on Windows or the board |
-| [scripts/](scripts/) | `krc-diag.sh` (no sudo), `sudo-setup.sh` (one-time root setup) |
-| [udev/](udev/), [systemd/](systemd/) | `/dev/krc-motor` rule; `krc-teleop.service`, installed but not enabled |
-| [docs/bringup.md](docs/bringup.md) | Bench bring-up procedure and controls |
-| [motor/](motor/) | Earlier C++ TB6612 driver (sysfs GPIO + PWM). Superseded by the Yahboom board |
-| [servo/](servo/) | Earlier C++ PCA9685 servo driver over `/dev/i2c-*` |
-| `deploy.ps1`, `remote-setup.sh` | Deploy from Windows to `beagle@192.168.1.116:~/krc-robot` |
+| [tests/](tests/) | Python unit tests, including the monitor client against a fake server. Run `python -m unittest discover -s tests` on Windows or the board |
+| [scripts/](scripts/) | Board scripts:<br/>- `build-krbot.sh`<br/>- `krbot-console.sh` (SSH terminal view)<br/>- `krc-diag.sh` (no sudo)<br/>- `bt-pair-gamepad.sh`<br/>- `sudo-setup.sh` (one-time root setup)<br/><br/>PC script: `monitor-from-pc.ps1` (SSH tunnel) |
+| [systemd/](systemd/) | `krbot.service` (user unit, not enabled at boot yet), `krc-ble-enable.service` (enabled), `krc-teleop.service` (not enabled) |
+| [udev/](udev/) | `/dev/krc-motor` symlink rule for the CH340K |
+| [docs/](docs/) | [bringup.md](docs/bringup.md) (bench procedure and running krbot), [system-design.md](docs/system-design.md) (doc v3 mapped onto code) |
+| [notes/](notes/) | Engineering notes: motor control and joystick design note, Bluetooth debugging |
+| [images/](images/) | App icons |
+| [motor/](motor/), [servo/](servo/) | Earlier C++ experiments (TB6612 sysfs PWM, PCA9685 over I2C). Superseded |
+| `deploy.ps1`, `remote-setup.sh` | Deploy from Windows to `beagle@192.168.1.116:~/krc-robot`. Also installs the desktop icons and the krbot user unit |
 
 ### Development workflow
 
-- Edit on Windows in VS Code. Run `.\deploy.ps1`, then use the tools over SSH (`ssh -t` for the curses dashboard), or open the board directly with Remote-SSH.
+1. Edit on Windows in VS Code, then run `.\deploy.ps1`.
+2. On the board, rebuild `krbot` with `build-krbot.sh` (or **Rebuild** in KR-bot Monitor), then restart the service.
+3. Watch the robot in **KR-bot Monitor**, on the board or with `.\scripts\monitor-from-pc.ps1` from the PC.
+4. Run the Python tests locally (`py -3 -m unittest discover -s tests`) and the C++ tests on the board (`ctest`).
+
 - Recommended VS Code extensions: C/C++ and CMake Tools, Remote-SSH, Python, Serial Monitor, Markdown All in One, markdownlint, Markdown Mermaid (which renders the diagrams in this file), and DeviceTree (for AM67A overlays).
+- **Windows gotcha:** files written from Windows tools must keep **LF** line endings. `.gitattributes` enforces this in git, but a CRLF shell script deployed straight from the working tree fails on the board.
 
 ---
 
@@ -249,17 +318,28 @@ Safety rules in the GUI:
 
 ### Phase 1: teleop
 
-- [ ] Verify the SN2403 wired, then over Bluetooth (onboard radio, then the dongle fallbacks)
-- [ ] Bench teleop on blocks, then on the ground. Enable `krc-teleop.service` afterwards
+- [x] SN2403 wired (XInput / xpad, rumble) verified
+- [x] Onboard BLE enabled at boot (`krc-ble-enable.service`), verified across a reboot
+- [ ] SN2403 BLE pairing test (`bt-pair-gamepad.sh`). If it fails, fall back to a Classic dongle and PS4 mode
+- [ ] Bench teleop with `krbot` on blocks, then on the ground. Then enable `krbot.service` at boot
 - [ ] Contact the seller about the SN2403 2.4 GHz receiver
+
+### C++ stack and tooling
+
+- [x] First increment: all five layers as libraries, with L1 (Yahboom) and L5 (teleop, watchdog, arbiter) real ([docs/system-design.md](docs/system-design.md))
+- [x] `krbot.service` user unit, the KR-bot Monitor client/server, and a PC monitor via SSH tunnel
+- [x] 50 Hz loop holds with no pad connected (discovery moved off the control thread)
+- [ ] Phase 1: vendor CLIPS 6.4 (`ClipsEngine`) and BehaviorTree.CPP (`HoldPosition`/`Idle` trees). Add the first safety-band rule (obstacle stop)
+- [ ] Reconnect the motor board without restarting `krbot`
+- [ ] Monitor auth token, before the monitor server is ever bound to the LAN
+- [ ] Share teleop tuning between `krbot.conf` and the bench app's `settings.json`
+- [ ] Update Design doc v3 §2/§8 for the USB-serial transport and the `setAllChannels` extension (see system-design §7)
 
 ### Phase 2 and later
 
-- [x] C++ stack, first increment: all five layers as libraries, with L1 (Yahboom) and L5 (teleop, watchdog, arbiter) real ([docs/system-design.md](docs/system-design.md))
-- [ ] Phase 1: vendor CLIPS 6.4 (`ClipsEngine`) and BehaviorTree.CPP (`HoldPosition`/`Idle` trees). Add the first safety-band rule (obstacle stop)
 - [ ] Fit the encoder motors (check mechanical fit first), switch to closed-loop speed, add L2 odometry
-- [ ] Update Design doc v3 §2/§8 for the USB-serial transport and the `setAllChannels` extension (see system-design §7)
-- [ ] Bring up L3/L4, then the VIU and BMS custom hardware
+- [ ] Ultrasonic sensor (`IDistanceSensor`), once its transport is decided
+- [ ] ROS 2 bridge (system-design §8), then the VIU and BMS custom hardware
 
 ## References
 
