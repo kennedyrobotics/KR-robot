@@ -288,7 +288,7 @@ Safety rules in the GUI:
 | [scripts/](scripts/) | Board scripts:<br/>- `build-krbot.sh`<br/>- `krbot-console.sh` (SSH terminal view)<br/>- `krc-diag.sh` (no sudo)<br/>- `bt-pair-gamepad.sh`<br/>- `sudo-setup.sh` (one-time root setup)<br/><br/>PC script: `monitor-from-pc.ps1` (SSH tunnel) |
 | [systemd/](systemd/) | `krbot.service` (user unit, not enabled at boot yet), `krc-ble-enable.service` (enabled), `krc-teleop.service` (not enabled) |
 | [udev/](udev/) | `/dev/krc-motor` symlink rule for the CH340K |
-| [docs/](docs/) | [bringup.md](docs/bringup.md) (bench procedure and running krbot), [system-design.md](docs/system-design.md) (doc v3 mapped onto code) |
+| [docs/](docs/) | [bringup.md](docs/bringup.md) (bench procedure and running krbot), [system-design.md](docs/system-design.md) (doc v3 mapped onto code), [wiring-manual.md](docs/wiring-manual.md) (40-pin header, Yahboom and sensor wiring, plus the interface ICD) |
 | [notes/](notes/) | Engineering notes: motor control and joystick design note, Bluetooth debugging |
 | [images/](images/) | App icons |
 | [motor/](motor/), [servo/](servo/) | Earlier C++ experiments (TB6612 sysfs PWM, PCA9685 over I2C). Superseded |

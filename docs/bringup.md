@@ -5,7 +5,7 @@ How to get the robot running on the bench, from a fresh deploy to live teleop. I
 - **The Python bench tools** ([krc/](../krc/), [tools/](../tools/), and the KR-Robot Control app). Use these for protocol discovery and hardware checks.
 - **The production C++ stack, `krbot`** ([krbot/](../krbot/)). It runs as a background service and is watched with the KR-bot Monitor app.
 
-See [../README.md](../README.md) for the architecture and [system-design.md](system-design.md) for how the C++ stack maps onto Design doc v3.
+See [../README.md](../README.md) for the architecture and [system-design.md](system-design.md) for how the C++ stack maps onto Design doc v3. Wiring, pin allocation and the per-interface ICD are in [wiring-manual.md](wiring-manual.md).
 
 > **Only one program can drive the motor board at a time.** The serial port is opened exclusively with `flock`, so stop `krbot` before you use the Python tools, and close the Python tools before you start `krbot`. The second one to start gets "in use".
 
