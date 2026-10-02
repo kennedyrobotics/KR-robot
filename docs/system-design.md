@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | First cut, 2026-10-02. It covers the first increment of the C++ stack in [krbot/](../krbot/) |
+| Status | First cut, 2026-10-02. It covers the first increment of the C++ stack in [krbot/](../krbot/), plus the monitoring client/server and the `krbot` user service (§6a) |
 | Source of truth | **Design doc v3**, "KR-bot Agentic Software Architecture" (5-layer, C++, CLIPS-based L4). It lives at `Engineering/Projects/KRC-Robot/Design/knowledge-agent-architecture.md`, outside this repo |
 | Also drawn from | [README.md](../README.md), the motor/joystick design note ([notes/kr-robot-motor-control-and-joystick.md](../notes/kr-robot-motor-control-and-joystick.md)), [notes/bluetooth-debugging.md](../notes/bluetooth-debugging.md) |
 | Framework decision | Plain C++20 and CMake now, with ROS 2 later as a bridge (§8). Built natively on the BeagleY-AI |
@@ -15,9 +15,14 @@ This document maps doc v3 onto code. Where the two disagree, doc v3 wins unless 
 
 ```mermaid
 flowchart TB
+    subgraph CORE ["core — krbot_core"]
+        APP[App<br/>wiring, shutdown order]
+        MS[MonitorServer<br/>TCP 127.0.0.1:5765]
+    end
     subgraph L5 ["L5 Execution & Operator Interface — krbot_exec"]
         MD[ManualDrive<br/>50 Hz direct path]
         TS[TeleopController]
+        DISC[gamepad discovery<br/>own thread]
         IN[InputDriver<br/>evdev]
         WD[Watchdog<br/>independent thread]
         GA[GoalArbiter<br/>+ IBehaviorExecutor]
@@ -37,7 +42,10 @@ flowchart TB
         YB[YahboomMotorControllerDriver<br/>SerialPort]
         SIM[SimMotorController]
     end
+    DISC -- "open pad (hand-off)" --> IN
     IN --> MD --> TS
+    APP -. snapshot .-> MS
+    MS -- "estop → requestEstop" --> MD
     MD == "setAllChannels / stopAll<br/>(direct L5→L1)" ==> YB
     WD == "stopAll on stall" ==> YB
     MD -- kick --> WD
@@ -58,8 +66,8 @@ flowchart TB
 | L3 Knowledge (§4) | `krbot_knowledge` | `src/knowledge/` | `Fact`, `FactDelta`, `FactTable`, `FactStore` | Working (in memory) |
 | L4 Reasoning (§5) | `krbot_reason` | `src/reason/` | `Goal`, `GoalQueue`, `IReasoner`, `ReasoningLoop`, `NullReasoner` | Stub engine; the sync path is real |
 | L5 Execution (§6) | `krbot_exec` | `src/exec/` | `ManualDrive`, `TeleopController`, `InputDriver`, `Watchdog`, `GoalArbiter`, `IBehaviorExecutor`, `StubExecutor` | **Real** for teleop, watchdog and arbiter; the BT executor is a stub |
-| core (§9) | `krbot` (exe) | `src/core/` | `App`, `main` | Real |
-| common | `krbot_common` | `src/common/` | `ThreadSafeQueue`, `Config`, `Log` | Real |
+| core (§9) | `krbot_core` + `krbot` (exe) | `src/core/` | `App`, `MonitorServer`, `main` | Real |
+| common | `krbot_common` | `src/common/` | `ThreadSafeQueue`, `Config`, `Log` (with a sink hook), `Json` | Real |
 
 **Dependency rule:** libraries depend only on layers below them, or on `common`. L2 depends on L3 because the observation→fact mapping lives at the L2→L3 boundary (doc v3 §3). L5 depends on L4 only for the `Goal` type. `DriverRegistry` is the only code that names concrete driver types (doc v3 §2).
 
@@ -69,16 +77,19 @@ flowchart TB
 
 | Thread | Owner | Rate | Talks to |
 |---|---|---|---|
-| `ManualDrive` | L5 | 50 Hz, fixed deadline | `InputDriver` (in the same thread), `IMotorController` (direct), `Watchdog::kick`, `FactStore` (commands) |
+| `ManualDrive` | L5 | 50 Hz, fixed deadline | open `InputDriver` (non-blocking poll), `IMotorController` (direct), `Watchdog::kick`, `FactStore` (commands) |
+| Gamepad discovery | L5 | 1 s, only while no pad is connected | scans `/dev/input` and opens the pad, then hands the open `InputDriver` to `ManualDrive` |
 | `Watchdog` | L5 | timeout/4 (50 ms) | `IMotorController::stopAll` (direct), `ManualDrive::requestEstop` |
 | Arbiter loop | core / L5 | 20 Hz | `GoalQueue` (drain), `FactStore` (outcomes) |
 | `ReasoningLoop` | L4 | 20 Hz | `FactDelta` queue (drain), `IReasoner`, `GoalQueue` (push) |
 | `FactStore` | L3 | event-driven, plus 10 Hz TTL sweep | Command queue (in), `FactDelta` queue (out) |
 | `PerceptionLoop` | L2 | 10 Hz | `ISensorSource::poll`, `FactStore` (commands) |
 | Yahboom RX | L1 | blocking read with 50 ms poll | parses `$MAll`/`$MTEP`/`$MSPD` into telemetry under a mutex |
+| `MonitorServer` | core | `poll()`, with status at 10 Hz | snapshot (read-only, through mutex-guarded getters), the log sink queue, and client sockets (§6a) |
 
 - **No thread locks another layer's data.** Every hand-off goes through a `common::ThreadSafeQueue`. The `FactStore` table is only touched by its own thread; reads are commands that carry a promise.
 - **L4 ticks are strictly phased** (doc v3 §5.3): drain the deltas, then `syncDelta` each one, then run a bounded `tick(runLimit)`. A tick that hits `runLimit` is counted and logged as a possible runaway rule pair.
+- **Discovery runs off the control thread.** Scanning `/dev/input` opens every input device, and waking an autosuspended USB HID device can block for tens of milliseconds. When the control loop did the scan itself, it measured **~47 Hz instead of 50**. With a separate discovery thread it holds 50.0 Hz.
 - **Deviation:** doc v3 has a global `g_goalQueue`. Here the `GoalQueue` is owned by `core::App` and handed to the reasoner's outputs and to the arbiter (§7).
 
 ---
@@ -113,6 +124,7 @@ using ExecutorFactory = std::function<std::unique_ptr<IBehaviorExecutor>(const G
 ```
 
 **`FactStore` write semantics:**
+
 - **`upsert`** is for functional facts, where each subject+predicate has one value (`robot teleopMode`, `motorBoard linkHealthy`). A second upsert emits **Modify**, which `ClipsEngine` applies as retract followed by reassert (doc v3 §5.3).
 - **`add`** is for multi-valued facts (`obstacleN distanceTo`).
 - Facts with a TTL are swept every 100 ms, and each expiry emits **Retract**.
@@ -128,7 +140,8 @@ These are the hard rules. All of them are covered by unit tests in `krbot/tests/
    - The robot starts **DISARMED**.
    - ARM needs START, with LB released and the sticks centred.
    - Output is produced only while the deadman (LB) is held. Releasing it zeroes the output instantly, with no slew.
-   - **ESTOP** can be triggered by B/HOME, the GUI, the watchdog, or a motor fault. It latches, survives link loss, and is cleared only by re-arming with START.
+   - **ESTOP** can be triggered by B/HOME, the watchdog, a motor fault, or an **external E-STOP**: a KR-bot Monitor `{"cmd":"estop"}`, or `SIGUSR1`. It latches, survives link loss, and is cleared only by re-arming with START.
+   - **No external path can arm or drive.** The monitor protocol has no such command, and `SIGUSR1` only stops.
 3. **Gamepad link loss** (`ENODEV`, POLLHUP, EOF): ARMED drops to DISARMED. Reconnection is automatic, but the robot always comes back DISARMED.
 4. **Motor fault.** If `isHealthy()` is false (open failed, read or write error, device gone), ESTOP is **held every tick**. Pressing START cannot arm the robot while the board is down. Nothing is written to an unhealthy controller.
 5. **Watchdog** (doc v3 §6, "the only hard safety backstop"):
@@ -139,12 +152,13 @@ These are the hard rules. All of them are covered by unit tests in `krbot/tests/
 7. **One process drives the board.** `SerialPort` takes `flock(LOCK_EX)`, the same lock pyserial's `exclusive=True` uses. The C++ stack, the Python desktop app and `tools/teleop.py` therefore cannot command the motors at the same time; the second one gets "in use".
 8. **DTR/RTS are held low** on open, so the CH340 auto-reset circuit doesn't reset the STM32.
 9. **Output clamp.** `motor.max_output` (default 1800 of an assumed ±3600) is enforced in the driver, below every caller.
+10. **The control loop never blocks.** Gamepad discovery runs on its own thread (§2). The monitor server runs on its own thread and drops slow clients. Logging to the monitor goes through a bounded, non-blocking queue.
 
 ---
 
 ## 5. Configuration
 
-[krbot/config/krbot.conf](../krbot/config/krbot.conf) is an INI-style file. Any key can be overridden as `--section.key=value`, and `--dry-run` forces `motor.driver=sim`. The teleop tuning defaults match the Python desktop app. Settings are not yet shared with `~/.config/krc-robot/settings.json` (that is an open item).
+[krbot/config/krbot.conf](../krbot/config/krbot.conf) is an INI-style file. Its sections are `[motor]`, `[input]`, `[teleop]`, `[watchdog]`, `[percep]`, `[reason]`, `[arbiter]` and `[monitor]`. Any key can be overridden as `--section.key=value`, and `--dry-run` forces `motor.driver=sim`. Under systemd, extra arguments come from `KRBOT_ARGS` (`systemctl --user set-environment`). The teleop tuning defaults match the Python desktop app. Settings are not yet shared with `~/.config/krc-robot/settings.json` (that is an open item).
 
 ---
 
@@ -152,21 +166,45 @@ These are the hard rules. All of them are covered by unit tests in `krbot/tests/
 
 ```bash
 # on the BeagleY-AI (deploy.ps1 ships krbot/ with everything else)
-bash ~/krc-robot/scripts/build-krbot.sh          # cmake + ninja + ctest (39 tests)
-~/krc-robot/krbot/build/krbot --dry-run           # real gamepad, simulated motors
-~/krc-robot/krbot/build/krbot                     # real motor board (close the desktop app first)
+bash ~/krc-robot/scripts/build-krbot.sh          # cmake + ninja + ctest (43 tests)
+systemctl --user start krbot                      # normal way to run it (or KR-bot Monitor -> Service)
+~/krc-robot/krbot/build/krbot --dry-run           # foreground: real gamepad, simulated motors
 ~/krc-robot/krbot/build/krbot --teleop.max_output=1200 --log=debug
 ```
 
 **Toolchain on the target:**
+
 - Debian 13 with g++ 14.2 (C++20), CMake 3.31, Ninja and GoogleTest 1.16 (from apt).
 - The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and is warning-clean.
 
 **Verified 2026-10-02 on the board:**
+
 - **Dry run:** found the wired SN2403 (`045e:028e`), held 50 Hz, the watchdog stayed quiet, and SIGINT stopped it with "motors zeroed".
 - **Real mode with no board attached:** fell back to `/dev/ttyUSB0`, used an unhealthy placeholder, latched ESTOP ("motor link lost"), and kept running and reporting.
+- **As a service in dry-run:** the monitor stream (hello, replay, status, log) was correct. E-STOP over the protocol was acknowledged and latched, and so was `SIGUSR1`.
+- **Loop rate:** 50.0 Hz with no pad connected, at 1.8 % CPU, after discovery moved off the control thread. It was ~47 Hz before.
 
 ---
+
+## 6a. Monitoring (client/server)
+
+`krbot` is the **server**. `core::MonitorServer` speaks protocol v1, which is line-delimited JSON over TCP.
+
+- **Endpoint:** `127.0.0.1:5765` by default (`[monitor]` in `krbot.conf`).
+- **On connect** it sends `hello`, then replays the last 100 log lines.
+- **After that** it streams `status` snapshots at 10 Hz, plus every `log` line as it happens.
+- **The only inbound commands are `estop` and `ping`.** There is deliberately **no remote arm or drive**: arming stays a gamepad action (§4). A test checks that `{"cmd":"arm"}` is rejected.
+- **A slow client is dropped** (more than 1 MB of unsent output) rather than ever back-pressuring the robot.
+- **If the monitor server fails to bind**, `krbot` logs it and keeps running without monitoring.
+
+| Client | Where | Notes |
+|---|---|---|
+| **KR-bot Monitor** (`krbot_monitor_gui.py`, desktop icon) | BeagleY-AI | Tabs: Overview (mode, deadman, cards, track bars, live L1–L5 panel), Inputs, Events, Service. The Service tab runs start, stop, dry-run, boot and rebuild through `systemctl --user` |
+| KR-bot Monitor via `scripts/monitor-from-pc.ps1` | Windows PC | Forwards a local port over SSH to the robot's `127.0.0.1:5765`, so no firewall change is needed and the link is encrypted |
+| `scripts/krbot-console.sh` | ssh terminal | Text view built from the journal |
+| any TCP client | — | e.g. `nc 127.0.0.1 5765`, or a future ROS 2 bridge (§8) |
+
+Runtime (`systemd/krbot.service`, a **user** unit): it is controlled without sudo, it is **not enabled at boot** until the motor protocol is bench-tested, and any restart comes up DISARMED. `SIGUSR1` latches E-STOP, which is what the console uses.
 
 ## 7. Deviations from Design doc v3
 
@@ -209,6 +247,7 @@ The plan is to keep the core free of middleware and add a `krbot_ros2` bridge (`
 | 1 | L2 sensing, minimal `FactStore`, safety-band CLIPS rules (obstacle stop) driving `HoldPosition`/`Idle` BTs | `FactStore` and L2 skeleton **done**. Next: vendor CLIPS and BT.CPP, add `ClipsEngine` and `BtExecutor`, then the first `obstacle-close-stop` rule |
 | 2 | Remaining sensors/actuators; expand the rule set | — |
 | 3 | Tasking rules, multi-goal arbitration, full BT library | Arbiter pre-emption with hysteresis is already in place and tested |
+| — | (not in doc v3) Operator monitoring and runtime | **Done:** `MonitorServer`, KR-bot Monitor, and the `krbot` user service (§6a) |
 | 4 | SQLite episodic persistence and long-term promotion | — |
 
 ## 10. Open items
@@ -217,5 +256,7 @@ The plan is to keep the core free of middleware and add a `krbot_ros2` bridge (`
 - [ ] Phase 1: `ClipsEngine` (CLIPS 6.4 via FetchContent, AddRouter → `Log`), `BtExecutor` (BehaviorTree.CPP 4), and the `trees/hold_position.xml` and `idle.xml` trees
 - [ ] Reconnect the motor board without a restart: let `DriverRegistry` retry the open, while ESTOP stays latched until re-arm
 - [ ] Share teleop tuning between `krbot.conf` and the desktop app's `settings.json`, or make the desktop app a front-end to `krbot`
-- [ ] `systemd/krbot.service`, once bench-tested. It replaces `krc-teleop.service`
+- [x] `systemd/krbot.service` (user unit) and the KR-bot Monitor client/server (§6a)
+- [ ] Enable `krbot.service` at boot once bench-tested. It replaces `krc-teleop.service`
+- [ ] Monitor auth: the server is localhost-only today. Add a token before ever binding it to `0.0.0.0`
 - [ ] Fold deviations D1 and D2 back into Design doc v3 §2/§8

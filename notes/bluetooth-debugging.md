@@ -25,7 +25,7 @@ Findings from bringing up the SN2403 gamepad on the BeagleY-AI, on 2026-10-01. T
 
 ## 1. Wired USB: controller "not showing up"
 
-### Symptom
+### Symptom (wired)
 
 The pad was plugged in and in PC mode. Nothing appeared in the app, in `/dev/input`, or in `lsusb`.
 
@@ -64,7 +64,7 @@ XInput mode is the right one: it gives standard `xpad` codes, which match the te
 
 ## 2. Onboard Bluetooth: no adapter
 
-### Symptom
+### Symptom (Bluetooth)
 
 - `bluetooth.service` was inactive. After `systemctl enable --now bluetooth` it ran, but `bluetoothctl list` returned nothing.
 - `/sys/class/bluetooth/` was empty.
@@ -102,7 +102,7 @@ $ ls /sys/class/bluetooth        ->  hci0
 $ bluetoothctl list              ->  Controller 10:CA:BF:D8:1E:05 BeagleyAI [default]
 ```
 
-**Persistence.** debugfs values reset on reboot. [`systemd/krc-ble-enable.service`](../systemd/krc-ble-enable.service) is a oneshot that runs before `bluetooth.service`. It waits up to 60 s for the Wi-Fi firmware to create the debugfs entry and then sets it. `scripts/sudo-setup.sh --bluetooth` installs and enables it.
+**Persistence.** debugfs values reset on reboot. [`systemd/krc-ble-enable.service`](../systemd/krc-ble-enable.service) is a oneshot that runs before `bluetooth.service`. It waits up to 60 s for the Wi-Fi firmware to create the debugfs entry and then sets it. `scripts/sudo-setup.sh --bluetooth` installs and enables it. **Verified 2026-10-02 across a full reboot:** the service came up `active`, `hci0` was registered, and `bluetoothctl list` showed the controller.
 
 > **Gotcha:** writing `1` when BLE is already on fails with `echo: I/O error` (EIO). The first version of the service hit this, retried for 60 s and then failed with a misleading "not found". The service now reads the value first and treats `1` as success.
 
@@ -177,6 +177,6 @@ ssh -t beagle@192.168.1.116 ~/krc-robot/tools/joystick-controller-debug.py   # l
 ## 6. Open items
 
 - [ ] Run the BLE pairing test with the SN2403 and record whether the pad appears in the LE scan
-- [ ] Confirm `krc-ble-enable.service` brings `hci0` up after a **full reboot**. So far it has only been tested by restarting the service
+- [x] Confirm `krc-ble-enable.service` brings `hci0` up after a **full reboot** (verified 2026-10-02)
 - [ ] If BLE pairing fails: choose a fallback (Classic dongle + PS4 mode, or 8BitDo adapter) and test it
 - [ ] Check the BLE link's range and latency against the 50 Hz teleop loop once paired
