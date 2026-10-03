@@ -33,6 +33,16 @@ BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST = 0x130, 0x131, 0x133, 0x134
 BTN_TL, BTN_TR, BTN_TL2, BTN_TR2 = 0x136, 0x137, 0x138, 0x139
 BTN_SELECT, BTN_START, BTN_MODE = 0x13A, 0x13B, 0x13C
 BTN_THUMBL, BTN_THUMBR = 0x13D, 0x13E
+KEY_MENU = 0x8B
+
+# Xbox One S pad (and SN2403 in its "Xbox Wireless Controller" mode) over Classic BT with
+# firmware 0x0903 and no xpadneo: hid-generic numbers HID buttons 1..10 straight onto
+# 0x130..0x139 and the Xbox button arrives as KEY_MENU. Measured on the BeagleY-AI 2026-10-03.
+# Without this, BACK reads as BTN_TL (the deadman) and START never fires.
+_XBOX_BT_0903 = {0x132: BTN_WEST, 0x133: BTN_NORTH, 0x134: BTN_TL, 0x135: BTN_TR,
+                 0x136: BTN_SELECT, 0x137: BTN_START, 0x138: BTN_THUMBL, 0x139: BTN_THUMBR,
+                 KEY_MENU: BTN_MODE}
+BUTTON_REMAPS = {(0x05, 0x045E, 0x02E0): _XBOX_BT_0903}   # (bustype, vendor, product) -> {raw: std}
 
 ABS_NAMES = {ABS_X: "LX", ABS_Y: "LY", ABS_Z: "LT", ABS_RX: "RX", ABS_RY: "RY", ABS_RZ: "RT",
              ABS_GAS: "RT(gas)", ABS_BRAKE: "LT(brake)", ABS_HAT0X: "DPAD_X", ABS_HAT0Y: "DPAD_Y"}
@@ -190,7 +200,8 @@ class Gamepad:
         buf = bytearray(8)
         fcntl.ioctl(self.fd, EVIOCGID, buf)
         self.bustype, self.vendor, self.product, self.version = struct.unpack("4H", buf)
-        self.keys = _bits(self.fd, EV_KEY, KEY_MAX)
+        self.remap = BUTTON_REMAPS.get((self.bustype, self.vendor, self.product), {})
+        self.keys = {self.remap.get(k, k) for k in _bits(self.fd, EV_KEY, KEY_MAX)}
         try:
             self.ff = _bits(self.fd, EV_FF, FF_MAX) if EV_FF in _bits(self.fd, 0, EV_MAX) else set()
         except OSError:
@@ -272,6 +283,7 @@ class Gamepad:
                 self.raw_axes[code] = value
                 self.state.axes[code] = self.axis_info[code].normalise(value)
             elif etype == EV_KEY:
+                code = self.remap.get(code, code)
                 self.state.buttons[code] = value != 0
             if etype != EV_SYN:
                 events.append((etype, code, value))

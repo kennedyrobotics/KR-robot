@@ -139,6 +139,9 @@ TeleopInputs ManualDrive::readInputs() {
             std::lock_guard sl(statusMutex_);
             status_.padConnected = true;
             status_.padName = input_->name();
+            status_.padId = input_->deviceId();
+            status_.padKeys = input_->keys();
+            status_.padRemapped = input_->remapped();
         }
     }
     TeleopInputs in;
@@ -157,9 +160,15 @@ TeleopInputs ManualDrive::readInputs() {
         std::lock_guard lock(statusMutex_);
         status_.padConnected = false;
         ++status_.padDisconnects;
+        status_.pad = {};
+        status_.padKeys.clear();
         return in;
     }
     const auto& s = input_->state();
+    {
+        std::lock_guard lock(statusMutex_);
+        status_.pad = s;
+    }
     in.linkOk = true;
     in.lx = s.axis(ABS_X);
     in.ly = s.axis(ABS_Y);

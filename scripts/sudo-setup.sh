@@ -2,6 +2,10 @@
 # One-time root setup on the BeagleY-AI. Run interactively (sudo prompts for a password):
 #   bash ~/krc-robot/scripts/sudo-setup.sh            # serial + gamepad
 #   bash ~/krc-robot/scripts/sudo-setup.sh --bluetooth  # also enable bluetooth.service
+#
+# The gamepad link is the CSR8510 USB dongle (Classic BT). The onboard CC3301's BLE stays OFF:
+# with it enabled and the dongle plugged in at boot, btti_uart oopses ~20 s in and wedges the boot
+# (notes/bluetooth-debugging.md §7). krc-ble-enable.service is kept in systemd/ but not installed.
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -24,18 +28,18 @@ if [ "${1:-}" = "--bluetooth" ]; then
   echo "==> Bluetooth service ..."
   sudo systemctl enable --now bluetooth
   command -v rfkill &>/dev/null && sudo rfkill unblock bluetooth || true
-  echo "==> CC33xx BLE enable at boot (onboard radio is LE-only) ..."
-  sudo install -m 0644 "${APP_DIR}/systemd/krc-ble-enable.service" /etc/systemd/system/krc-ble-enable.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now krc-ble-enable
-  sleep 3
-  [ -e /sys/class/bluetooth/hci0 ] && echo "    hci0 present" || echo "    hci0 NOT present — check: journalctl -u krc-ble-enable"
+  if systemctl is-enabled --quiet krc-ble-enable 2>/dev/null; then
+    echo "==> Disabling krc-ble-enable (onboard BLE crashes the boot alongside the USB dongle; reboot to clear) ..."
+    sudo systemctl disable krc-ble-enable
+  fi
+  ls /sys/class/bluetooth 2>/dev/null | grep -q hci && echo "    adapter present" \
+    || echo "    no adapter — plug in the CSR8510 USB dongle"
 fi
 
 cat <<EOF
 
 Done. If groups changed, log out/in (or reboot) before using the tools.
-Auto-start teleop on boot only once bench-tested:
-  sudo systemctl enable --now krc-teleop
-  journalctl -u krc-teleop -f
+Start krbot at boot only once bench-tested (no sudo needed; linger starts it without a login):
+  systemctl --user enable krbot && loginctl enable-linger
+  journalctl --user -u krbot -f
 EOF

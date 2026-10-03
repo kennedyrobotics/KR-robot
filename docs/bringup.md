@@ -44,7 +44,9 @@ On the board, once, in an interactive session so that sudo can prompt for the pa
 ```bash
 bash ~/krc-robot/scripts/sudo-setup.sh --bluetooth
 # installs: evtest, python3-serial, python3-tk, udev rule, groups, krc-teleop.service (not enabled),
-#           bluetooth.service + krc-ble-enable.service (onboard CC3301 BLE, enabled at boot)
+#           bluetooth.service. Gamepad BT is the CSR8510 USB dongle; onboard CC3301 BLE stays OFF
+#           (krc-ble-enable.service crashes the boot alongside the dongle, notes/bluetooth-debugging.md §7)
+# then pair the pad: bash ~/krc-robot/scripts/bt-pair-gamepad.sh
 # log out/in so the dialout + input groups take effect
 bash ~/krc-robot/scripts/build-krbot.sh          # C++ stack: cmake + ninja + ctest (43 tests)
 ```
@@ -87,7 +89,7 @@ The C++ build needs `libgtest-dev`, `ninja-build` and `libsqlite3-dev` from apt.
    - Test that B latches ESTOP, and that **SPACE** in the monitor does too.
    - Unplug the pad and confirm the robot disarms.
 7. **Live teleop, still on blocks.** In KR-bot Monitor, go to Service and press **Start**. Keep `teleop.max_output` at or below 1200 in `krbot.conf`, and raise it only once step 5 has confirmed the full scale. The Python equivalent is `teleop.py --max-pwm 1200`.
-8. **After bench sign-off:** press **Boot: on** in the monitor's Service tab, or run `systemctl --user enable krbot`. `krbot` then starts at login, which on this board means at boot because of autologin. It always comes up DISARMED.
+8. **After bench sign-off:** press **Boot: on** in the monitor's Service tab, or run `systemctl --user enable krbot`. Also run `loginctl enable-linger` (no sudo needed) so it starts at boot without waiting for a login. It always comes up DISARMED. **Done on this robot 2026-10-03, verified across a reboot.**
 
 ### Teleop controls
 
@@ -118,7 +120,9 @@ The C++ build needs `libgtest-dev`, `ninja-build` and `libsqlite3-dev` from apt.
 **Verified on the board:**
 
 - **SN2403 wired:** enumerates as `045e:028e` through `xpad`, with rumble working.
-- **Onboard BLE adapter:** `hci0` comes up after a reboot via `krc-ble-enable.service`.
+- **SN2403 over Bluetooth (2026-10-03):** Classic BT via the CSR8510 USB dongle. Reconnects by itself after power loss and reboot. Arm (START), deadman (LB), e-stop (HOME/B) and track response checked on blocks.
+- **`krbot` at boot (2026-10-03):** starts by itself after a reboot, DISARMED, and picks up the pad.
+- **Onboard BLE adapter:** works via `krc-ble-enable.service`, but is now **disabled**: with the USB dongle present at boot, `btti_uart` oopses and wedges the boot.
 - **`krbot` without the motor board:** the dry run holds 50.0 Hz. In real mode with no board attached, it latches ESTOP.
 - **E-STOP from the monitor and via `SIGUSR1`:** both latch.
 

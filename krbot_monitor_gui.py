@@ -41,6 +41,15 @@ STALE_S = 1.5          # no status for this long while connected -> STALE
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 UNIT = "krbot.service"
 
+# Controller tab: linux evdev codes as krbot reports them (after its per-pad button remap). Defined here,
+# not imported from krc.joystick, because that module needs fcntl and this window also runs on Windows.
+PAD_BUTTONS = (  # (name, code)
+    ("A", 0x130), ("B", 0x131), ("X", 0x134), ("Y", 0x133), ("LB", 0x136), ("RB", 0x137),
+    ("BACK", 0x13A), ("START", 0x13B), ("HOME", 0x13C), ("LS", 0x13D), ("RS", 0x13E))
+PAD_ROLES = {"LB": "deadman", "START": "arm", "B": "e-stop", "HOME": "e-stop"}
+ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ, ABS_GAS, ABS_BRAKE, ABS_HAT0X, ABS_HAT0Y = 0, 1, 2, 3, 4, 5, 9, 10, 16, 17
+FULL = 0.9             # axis checklist: a stick/trigger "reaches full travel" past this
+
 
 def fmt_uptime(s: float) -> str:
     s = int(s)
@@ -71,6 +80,7 @@ class MonitorApp(tk.Tk):
         self._nb.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
         self._build_overview_tab()
         self._build_inputs_tab()
+        self._build_controller_tab()
         self._build_events_tab()
         self._build_service_tab()
 
@@ -160,6 +170,168 @@ class MonitorApp(tk.Tk):
             self._btn[key] = lbl
         tk.Label(f, text="Shows the inputs krbot's control loop received on its last tick (10 Hz snapshot).",
                  bg=BG, fg=DIM, font=(UI, 9, "italic")).pack(anchor="w", padx=12)
+
+    # ------------------------------------------------------------------ controller
+    def _build_controller_tab(self) -> None:
+        """Every button and axis on the pad, live, plus a press-each-one checklist for maintenance."""
+        f = ttk.Frame(self._nb)
+        self._nb.add(f, text="Controller")
+        top = tk.Frame(f, bg=BG)
+        top.pack(fill=tk.X, padx=8, pady=(6, 0))
+        self._pad_info = tk.Label(top, text="", bg=BG, fg=MUTED, font=(MONO, 10), anchor="w")
+        self._pad_info.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        button(top, "Reset checklist", self._pad_reset).pack(side=tk.RIGHT)
+
+        body = tk.Frame(f, bg=BG)
+        body.pack(fill=tk.BOTH, expand=True, padx=6)
+        pic = section(body, "Live — lit while pressed", side=tk.LEFT, fill=tk.Y)
+        cv = self._pad_cv = tk.Canvas(pic, width=560, height=300, bg=ENTRY_BG, highlightthickness=0)
+        cv.pack()
+        cv.create_polygon(90, 70, 470, 70, 520, 150, 510, 270, 440, 285, 380, 235, 180, 235, 120, 285, 50, 270,
+                          40, 150, smooth=True, fill=PANEL, outline=DIM)
+        self._pad_items: dict[str, int] = {}
+
+        def btn(name: str, x: float, y: float, r: float, label: str | None = None) -> None:
+            self._pad_items[name] = cv.create_oval(x - r, y - r, x + r, y + r, fill=ENTRY_BG, outline=MUTED, width=2)
+            cv.create_text(x, y, text=label or name, fill=TEXT, font=(UI, 8 if r < 14 else 10, "bold"))
+
+        def rect(name: str, x0: float, y0: float, x1: float, y1: float, label: str) -> None:
+            self._pad_items[name] = cv.create_rectangle(x0, y0, x1, y1, fill=ENTRY_BG, outline=MUTED, width=2)
+            cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=label, fill=TEXT, font=(UI, 9, "bold"))
+
+        for side, x0 in (("L", 80), ("R", 380)):   # triggers (fill bar) above bumpers
+            cv.create_rectangle(x0, 8, x0 + 100, 28, outline=MUTED, width=2)
+            self._pad_items[f"{side}T"] = cv.create_rectangle(x0, 8, x0, 28, fill=ACCENT, width=0)
+            cv.create_text(x0 + 50, 18, text=f"{side}T", fill=TEXT, font=(UI, 9, "bold"))
+            rect(f"{side}B", x0, 36, x0 + 100, 58, f"{side}B")
+        for name, cx, cy in (("LS", 150, 135), ("RS", 340, 200)):   # sticks: ring = click, dot = position
+            self._pad_items[name] = cv.create_oval(cx - 36, cy - 36, cx + 36, cy + 36, fill=ENTRY_BG, outline=MUTED, width=2)
+            self._pad_items[name + "_dot"] = cv.create_oval(cx - 9, cy - 9, cx + 9, cy + 9, fill=ACCENT, outline="")
+            cv.create_text(cx, cy + 48, text=name, fill=MUTED, font=(UI, 8))
+        for name, dx, dy in (("D_UP", 0, -1), ("D_DOWN", 0, 1), ("D_LEFT", -1, 0), ("D_RIGHT", 1, 0)):
+            x, y = 220 + dx * 20, 200 + dy * 20
+            self._pad_items[name] = cv.create_rectangle(x - 10, y - 10, x + 10, y + 10, fill=ENTRY_BG, outline=MUTED, width=2)
+        cv.create_text(220, 238, text="D-pad", fill=MUTED, font=(UI, 8))
+        btn("Y", 420, 105, 15)
+        btn("X", 390, 135, 15)
+        btn("B", 450, 135, 15)
+        btn("A", 420, 165, 15)
+        btn("BACK", 235, 125, 12, "⧉")
+        btn("HOME", 280, 95, 16, "⌂")
+        btn("START", 325, 125, 12, "≡")
+        self._pad_axes_lbl = tk.Label(pic, text="", bg=PANEL, fg=TEXT, font=(MONO, 9), justify=tk.LEFT, anchor="w")
+        self._pad_axes_lbl.pack(fill=tk.X, pady=(6, 0))
+        self._pad_other_lbl = tk.Label(pic, text="", bg=PANEL, fg=WARN, font=(MONO, 9), anchor="w")
+        self._pad_other_lbl.pack(fill=tk.X)
+
+        chk = section(body, "Maintenance checklist — press / move each one", side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for col, (text, w) in enumerate((("control", 9), ("role", 8), ("now", 5), ("presses", 7), ("ok", 4))):
+            tk.Label(chk, text=text, bg=PANEL, fg=DIM, font=(UI, 9, "bold"), width=w, anchor="w").grid(row=0, column=col)
+        self._pad_rows: dict[str, tuple[tk.Label, tk.Label, tk.Label]] = {}
+        rows = [n for n, _ in PAD_BUTTONS] + ["LT", "RT", "L-stick", "R-stick", "D-pad"]
+        for i, name in enumerate(rows, start=1):
+            role = PAD_ROLES.get(name, "full travel" if name in ("LT", "RT") else "4 ways" if "stick" in name or name == "D-pad" else "")
+            tk.Label(chk, text=name, bg=PANEL, fg=TEXT, font=(MONO, 10), width=9, anchor="w").grid(row=i, column=0)
+            tk.Label(chk, text=role, bg=PANEL, fg=WARN if role in ("deadman", "arm", "e-stop") else MUTED,
+                     font=(UI, 9), width=8, anchor="w").grid(row=i, column=1)
+            cells = tuple(tk.Label(chk, text="", bg=PANEL, fg=TEXT, font=(MONO, 10), width=w, anchor="w")
+                          for w in (5, 7, 4))
+            for col, c in enumerate(cells, start=2):
+                c.grid(row=i, column=col, pady=1)
+            self._pad_rows[name] = cells
+        self._pad_summary = tk.Label(chk, text="", bg=PANEL, fg=MUTED, font=(UI, 10, "bold"), anchor="w")
+        self._pad_summary.grid(row=len(rows) + 1, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        tk.Label(f, text="Press counts come from krbot (a quick tap between 10 Hz snapshots still counts). Sticks, "
+                         "triggers and D-pad are sampled at 10 Hz — hold each direction briefly. Live view only: "
+                         "nothing here drives the robot.",
+                 bg=BG, fg=DIM, font=(UI, 9, "italic"), wraplength=1100, justify=tk.LEFT).pack(anchor="w", padx=12, pady=(0, 4))
+        self._pad_reset()
+
+    def _pad_reset(self) -> None:
+        pad = self.status.get("pad", {}) if self.status else {}
+        self._pad_base = {int(k): v[1] for k, v in pad.get("buttons", {}).items()}
+        self._pad_seen: set[str] = set()   # axis directions reached since reset, e.g. "L-stick+x", "LT", "D-pad-y"
+
+    def _update_controller(self, live: bool, pad: dict, connected: bool) -> None:
+        cv = self._pad_cv
+        keys = set(pad.get("keys", [])) if live and connected else set()
+        btns = {int(k): v for k, v in pad.get("buttons", {}).items()} if live and connected else {}
+        axes = {int(k): v for k, v in pad.get("axes", {}).items()} if live and connected else {}
+        remap = "  [button remap active]" if pad.get("remap") else ""
+        self._pad_info.configure(text=f"{(self.status.get('gamepad') or {}).get('name') or 'no gamepad'}  "
+                                      f"id {pad.get('id') or '—'}{remap}" if live and connected else
+                                 "no gamepad connected to krbot" if live else "no live data from krbot")
+
+        n_ok = n_total = 0
+        for name, code in PAD_BUTTONS:
+            down, count = btns.get(code, (0, 0))
+            if count < self._pad_base.get(code, 0):          # pad reconnected: krbot's counts restarted
+                self._pad_base[code] = 0
+            pressed = count - self._pad_base.get(code, 0)
+            present = code in keys
+            role = PAD_ROLES.get(name)
+            lit = BAD if role == "e-stop" else GOOD
+            cv.itemconfigure(self._pad_items[name], fill=lit if down else ENTRY_BG,
+                             outline=MUTED if present or not keys else DIM, dash="" if present or not keys else (3, 3))
+            now, cnt, ok = self._pad_rows[name]
+            now.configure(text="●" if down else "○", fg=lit if down else DIM)
+            cnt.configure(text=str(pressed) if present else "absent", fg=TEXT if present else DIM)
+            ok.configure(text="✓" if pressed else "", fg=GOOD)
+            if present:
+                n_total += 1
+                n_ok += bool(pressed)
+
+        def axis(*codes: int) -> float:
+            return next((axes[c] for c in codes if c in axes), 0.0)
+
+        lt, rt = axis(ABS_Z, ABS_BRAKE), axis(ABS_RZ, ABS_GAS)
+        for side, v in (("L", lt), ("R", rt)):
+            x0 = 80 if side == "L" else 380
+            cv.coords(self._pad_items[f"{side}T"], x0, 8, x0 + 100 * max(0.0, min(1.0, v)), 28)
+            if v > FULL:
+                self._pad_seen.add(f"{side}T")
+        sticks = {"L-stick": ("LS", 150, 135, axis(ABS_X), axis(ABS_Y)),
+                  "R-stick": ("RS", 340, 200, axis(ABS_RX), axis(ABS_RY))}
+        for row, (name, cx, cy, x, y) in sticks.items():
+            cv.coords(self._pad_items[name + "_dot"], cx + x * 27 - 9, cy + y * 27 - 9, cx + x * 27 + 9, cy + y * 27 + 9)
+            for ax, v in (("x", x), ("y", y)):
+                if abs(v) > FULL:
+                    self._pad_seen.add(f"{row}{'+' if v > 0 else '-'}{ax}")
+        hx, hy = axis(ABS_HAT0X), axis(ABS_HAT0Y)
+        for name, on in (("D_UP", hy < -0.5), ("D_DOWN", hy > 0.5), ("D_LEFT", hx < -0.5), ("D_RIGHT", hx > 0.5)):
+            cv.itemconfigure(self._pad_items[name], fill=GOOD if on else ENTRY_BG)
+            if on:
+                self._pad_seen.add(name)
+
+        def axis_row(row: str, now_text: str, need: list[str], arrows: str) -> None:
+            nonlocal n_ok, n_total
+            got = [n for n in need if n in self._pad_seen]
+            now, cnt, ok = self._pad_rows[row]
+            now.configure(text=now_text, fg=TEXT)
+            cnt.configure(text="".join(a if n in self._pad_seen else "·" for a, n in zip(arrows, need)), fg=TEXT)
+            ok.configure(text="✓" if len(got) == len(need) else "", fg=GOOD)
+            if axes:
+                n_total += 1
+                n_ok += len(got) == len(need)
+
+        axis_row("LT", f"{lt:.2f}", ["LT"], "■")
+        axis_row("RT", f"{rt:.2f}", ["RT"], "■")
+        for row in sticks:
+            axis_row(row, "", [f"{row}-y", f"{row}+y", f"{row}-x", f"{row}+x"], "↑↓←→")
+        axis_row("D-pad", "", ["D_UP", "D_DOWN", "D_LEFT", "D_RIGHT"], "↑↓←→")
+
+        self._pad_axes_lbl.configure(text=(
+            f"L  x {axis(ABS_X):+.3f}  y {axis(ABS_Y):+.3f}     R  x {axis(ABS_RX):+.3f}  y {axis(ABS_RY):+.3f}\n"
+            f"LT {lt:.3f}   RT {rt:.3f}   hat {hx:+.0f},{hy:+.0f}   (centred sticks should read ~0.000: drift check)")
+            if axes else "")
+        known = {c for _, c in PAD_BUTTONS}
+        other = sorted(c for c in keys if c not in known)
+        held = [f"0x{c:03x}" + ("●" if btns.get(c, (0, 0))[0] else "") for c in other]
+        self._pad_other_lbl.configure(text=f"other key codes on this device (not used by teleop): {' '.join(held)}"
+                                      if held else "")
+        self._pad_summary.configure(
+            text=f"{n_ok} / {n_total} confirmed" + ("  — ALL OK" if n_total and n_ok == n_total else ""),
+            fg=GOOD if n_total and n_ok == n_total else MUTED)
 
     # ------------------------------------------------------------------ events
     def _build_events_tab(self) -> None:
@@ -393,6 +565,7 @@ class MonitorApp(tk.Tk):
             good = key in ("link",)
             lbl.configure(bg=(GOOD if good else (BAD if key == "estop" else ACCENT)) if on else ENTRY_BG,
                           fg=BG if on else MUTED)
+        self._update_controller(live, s.get("pad", {}), bool(pad.get("connected")))
 
 
 def main() -> int:

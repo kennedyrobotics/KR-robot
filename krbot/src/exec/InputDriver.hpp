@@ -25,6 +25,7 @@ struct AxisInfo {
 struct GamepadState {
     std::map<int, float> axes;     // linux ABS_* code -> normalised
     std::map<int, bool> buttons;   // linux BTN_* code -> pressed
+    std::map<int, uint32_t> presses;  // code -> presses since open (monitor checklist: a tap between snapshots still counts)
     float axis(int code) const;
     bool button(int code) const;
 };
@@ -48,15 +49,20 @@ public:
     const std::string& name() const { return name_; }
     const std::string& path() const { return path_; }
     uint16_t busType() const { return bus_; }
+    const std::string& deviceId() const { return id_; }  // "045e:02e0"
+    const std::set<int>& keys() const { return keys_; }  // EV_KEY codes the device has, after remap
+    bool remapped() const { return !buttonRemap_.empty(); }
 
     static std::vector<std::string> findGamepads();
     static bool isGamepad(const std::string& path);
 
 private:
     int fd_ = -1;
-    std::string path_, name_;
+    std::string path_, name_, id_;
+    std::set<int> keys_;
     uint16_t bus_ = 0;
     std::map<int, AxisInfo> axisInfo_;
+    std::map<int, int> buttonRemap_;   // raw EV_KEY code -> standard BTN_* (see InputDriver.cpp)
     GamepadState state_;
 };
 

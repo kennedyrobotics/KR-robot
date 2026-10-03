@@ -126,11 +126,12 @@ ASCII frames `$cmd:args#` at 115200 8N1. Init sequence, with ~100 ms between com
 
 ### 4.1 Joystick connection options, in order of preference
 
-1. **Bluetooth, PC mode, onboard BeagleY-AI radio.** The pad advertises as "Xbox Wireless Controller".
-   - **Confirmed 2026-10-01:** the onboard CC3301 is BLE-only (`btmgmt` reports `le` but no `br/edr`).
-   - TI's cc33xx driver leaves BLE off (debugfs `ble_enable=0`), so no `hci0` ever appears. [systemd/krc-ble-enable.service](systemd/krc-ble-enable.service) turns it on at boot. A full reboot test on 2026-10-02 confirmed `hci0` comes up. The details are in [notes/bluetooth-debugging.md](notes/bluetooth-debugging.md).
-   - Pair with [scripts/bt-pair-gamepad.sh](scripts/bt-pair-gamepad.sh). This works only if the pad's Xbox emulation uses BLE, as Series-style controllers do.
-2. **USB Bluetooth Classic dongle.** Pad in PS4 or Switch mode, using `hid-playstation` / `hid-nintendo`.
+1. **USB Bluetooth Classic dongle, pad in its Xbox mode. In use since 2026-10-03.**
+   - The pad advertises as "Xbox Wireless Controller" (`045e:02e0`, firmware 0903) and is **Classic** BT HID, so it needs a BR/EDR adapter. A CSR8510 A10 USB dongle (`0a12:0001`, `btusb`) works with no driver setup.
+   - Pair with [scripts/bt-pair-gamepad.sh](scripts/bt-pair-gamepad.sh), which picks the Classic-capable adapter. Once paired and trusted, the pad reconnects by itself after power loss or a reboot.
+   - Over BT this firmware reports non-standard button codes. `krc/joystick.py` and the C++ `InputDriver` remap them for this pad only. Verify with the monitor's **Controller** tab.
+   - The details are in [notes/bluetooth-debugging.md](notes/bluetooth-debugging.md).
+2. **Onboard BeagleY-AI radio: not used.** The CC3301 is BLE-only (confirmed 2026-10-01), so it can't carry this pad. Its BLE is left **off**: [systemd/krc-ble-enable.service](systemd/krc-ble-enable.service) can turn it on, but with the dongle also present at boot the `btti_uart` driver oopses and wedges the boot (notes §7). Keep that service disabled.
 3. **8BitDo USB Wireless Adapter 2.** The pad appears as a wired Xbox pad (`xpad`).
 4. **Wired USB, XInput (`xpad`).** Used for bench work now. Verified 2026-10-01: the pad enumerates as `045e:028e` "Microsoft X-Box 360 pad" and supports rumble. It needs a USB data cable in a USB-A port.
 
@@ -204,9 +205,9 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 |---|---|---|
 | **KR-bot Monitor** ([krbot_monitor_gui.py](krbot_monitor_gui.py)) | Client for the production C++ stack: live status, events, E-STOP and service control | Board desktop icon, or the PC via `scripts\monitor-from-pc.ps1` |
 | **KR-Robot Control** ([krc_robot_gui.py](krc_robot_gui.py)) | Python bench app: teleop, bench pulse, protocol tools | Board desktop icon |
-| `krbot.service` (systemd **user** unit) | The C++ stack running headless | Started from the monitor or with `systemctl --user`. **Not enabled at boot** until bench-tested |
+| `krbot.service` (systemd **user** unit) | The C++ stack running headless | **Enabled at boot** since 2026-10-03 (with `loginctl enable-linger`, so no login is needed). Always comes up DISARMED. Start/stop from the monitor or with `systemctl --user` |
 | `krc-teleop.service` | Headless Python teleop (`tools/teleop.py`) | Installed, not enabled. Superseded by `krbot.service` |
-| `krc-ble-enable.service` | Turns on the CC3301's BLE so `hci0` appears | Enabled at boot |
+| `krc-ble-enable.service` | Turns on the CC3301's BLE | **Disabled** (2026-10-03): crashes the boot alongside the USB dongle |
 
 The motor serial port is exclusive (`flock`), so **only one of `krbot`, KR-Robot Control or `tools/teleop.py` can drive the robot at a time**.
 
@@ -286,7 +287,7 @@ Safety rules in the GUI:
 | [tools/](tools/) | Bench CLIs: `joystick-controller-debug.py`, `joy_test.py`, `yahboom_probe.py`, `teleop.py` |
 | [tests/](tests/) | Python unit tests, including the monitor client against a fake server. Run `python -m unittest discover -s tests` on Windows or the board |
 | [scripts/](scripts/) | Board scripts:<br/>- `build-krbot.sh`<br/>- `krbot-console.sh` (SSH terminal view)<br/>- `krc-diag.sh` (no sudo)<br/>- `bt-pair-gamepad.sh`<br/>- `sudo-setup.sh` (one-time root setup)<br/><br/>PC script: `monitor-from-pc.ps1` (SSH tunnel) |
-| [systemd/](systemd/) | `krbot.service` (user unit, not enabled at boot yet), `krc-ble-enable.service` (enabled), `krc-teleop.service` (not enabled) |
+| [systemd/](systemd/) | `krbot.service` (user unit, enabled at boot), `krc-ble-enable.service` (disabled, see §4.1), `krc-teleop.service` (not enabled) |
 | [udev/](udev/) | `/dev/krc-motor` symlink rule for the CH340K |
 | [docs/](docs/) | [bringup.md](docs/bringup.md) (bench procedure and running krbot), [system-design.md](docs/system-design.md) (doc v3 mapped onto code), [wiring-manual.md](docs/wiring-manual.md) (40-pin header, Yahboom and sensor wiring, plus the interface ICD), [test-validation.md](docs/test-validation.md) (test checklist from integration to requirements validation, with a traceability matrix) |
 | [notes/](notes/) | Engineering notes: motor control and joystick design note, Bluetooth debugging |
@@ -319,9 +320,10 @@ Safety rules in the GUI:
 ### Phase 1: teleop
 
 - [x] SN2403 wired (XInput / xpad, rumble) verified
-- [x] Onboard BLE enabled at boot (`krc-ble-enable.service`), verified across a reboot
-- [ ] SN2403 BLE pairing test (`bt-pair-gamepad.sh`). If it fails, fall back to a Classic dongle and PS4 mode
-- [ ] Bench teleop with `krbot` on blocks, then on the ground. Then enable `krbot.service` at boot
+- [x] Onboard BLE enabled at boot, verified across a reboot (since disabled: boot crash with the dongle)
+- [x] SN2403 BLE pairing test: the pad is Classic, not BLE. Paired over a Classic USB dongle instead, with a button remap
+- [x] Bench teleop with `krbot` on blocks (arm, deadman, e-stop, track response) over BT. `krbot.service` enabled at boot
+- [ ] Teleop on the ground
 - [ ] Contact the seller about the SN2403 2.4 GHz receiver
 
 ### C++ stack and tooling
