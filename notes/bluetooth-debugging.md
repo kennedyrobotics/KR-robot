@@ -17,10 +17,11 @@ Findings from bringing up the SN2403 gamepad on the BeagleY-AI, on 2026-10-01. T
 |---|---|
 | Wired USB, PC mode (XInput) | **Works.** Enumerates as `045e:028e` "Microsoft X-Box 360 pad" through `xpad`, with rumble. Needs a USB **data** cable in a **USB-A** port |
 | No Bluetooth adapter (`hci0` missing) | **Root cause found.** TI's `cc33xx` driver leaves BLE switched off (debugfs `ble_enable = 0`), so `btti` never registers `hci0` |
-| Fix | `echo 1 > /sys/kernel/debug/ieee80211/phy0/cc33xx/ble_enable`, made persistent by `systemd/krc-ble-enable.service` |
+| Fix | `echo 1 > /sys/kernel/debug/ieee80211/phy0/cc33xx/ble_enable`, made persistent by `systemd/krc-ble-enable.service`. **Now disabled**, see the boot-hang row |
+| Boot hang with dongle + onboard BLE (2026-10-03) | `btti_uart` oopses ~20 s into boot when both adapters come up together, wedging the boot. **Fix:** `krc-ble-enable` disabled; the dongle is the only adapter (§7) |
 | Onboard radio capability | **BLE only.** No Classic (BR/EDR). The SN2403 pairs over it only if its "Xbox Wireless Controller" emulation uses BLE |
 | Pad over BLE | **Not possible.** The pad's "Xbox Wireless Controller" mode is Classic BT HID (`045e:02e0`, firmware 0903) |
-| Pad over Classic BT (2026-10-03) | **Works** via a CSR8510 A10 USB dongle (`0a12:0001`, `btusb`, `hci1`). Paired, trusted and connected as `/dev/input/event5`. `scripts/bt-pair-gamepad.sh` now picks the BR/EDR-capable adapter |
+| Pad over Classic BT (2026-10-03) | **Works** via a CSR8510 A10 USB dongle (`0a12:0001`, `btusb`, `hci0` now that onboard BLE is off). Paired, trusted and connected as `/dev/input/event5`. `scripts/bt-pair-gamepad.sh` now picks the BR/EDR-capable adapter |
 | Button layout over BT | **Non-standard; remapped in software.** hid-generic puts HID buttons 1–10 on 0x130–0x139 and the Xbox button on KEY_MENU (0x08b). `BUTTON_REMAPS` in `krc/joystick.py` and `buttonRemapFor()` in `krbot/src/exec/InputDriver.cpp` translate to standard codes for this pad only. Measured: A–RB, LS/RS, LT/RT. Confirmed on the robot 2026-10-03 with the tracks off the ground: HOME e-stops, LB is the deadman, START arms, sticks drive the tracks as expected. BACK (unused by teleop) not confirmed; in raw captures one small button sent no event at all |
 
 ---
@@ -104,7 +105,7 @@ $ ls /sys/class/bluetooth        ->  hci0
 $ bluetoothctl list              ->  Controller 10:CA:BF:D8:1E:05 BeagleyAI [default]
 ```
 
-**Persistence.** debugfs values reset on reboot. [`systemd/krc-ble-enable.service`](../systemd/krc-ble-enable.service) is a oneshot that runs before `bluetooth.service`. It waits up to 60 s for the Wi-Fi firmware to create the debugfs entry and then sets it. `scripts/sudo-setup.sh --bluetooth` installs and enables it. **Verified 2026-10-02 across a full reboot:** the service came up `active`, `hci0` was registered, and `bluetoothctl list` showed the controller.
+**Persistence.** debugfs values reset on reboot. [`systemd/krc-ble-enable.service`](../systemd/krc-ble-enable.service) is a oneshot that runs before `bluetooth.service`. It waits up to 60 s for the Wi-Fi firmware to create the debugfs entry and then sets it. `scripts/sudo-setup.sh --bluetooth` used to install and enable it (it no longer does, §7). **Verified 2026-10-02 across a full reboot:** the service came up `active`, `hci0` was registered, and `bluetoothctl list` showed the controller.
 
 > **Gotcha:** writing `1` when BLE is already on fails with `echo: I/O error` (EIO). The first version of the service hit this, retried for 60 s and then failed with a misleading "not found". The service now reads the value first and treats `1` as success.
 
@@ -178,7 +179,42 @@ ssh -t beagle@192.168.1.116 ~/krc-robot/tools/joystick-controller-debug.py   # l
 
 ## 6. Open items
 
-- [ ] Run the BLE pairing test with the SN2403 and record whether the pad appears in the LE scan
-- [x] Confirm `krc-ble-enable.service` brings `hci0` up after a **full reboot** (verified 2026-10-02)
-- [ ] If BLE pairing fails: choose a fallback (Classic dongle + PS4 mode, or 8BitDo adapter) and test it
-- [ ] Check the BLE link's range and latency against the 50 Hz teleop loop once paired
+- [x] Run the BLE pairing test with the SN2403. Result: the pad's Xbox mode is Classic, not BLE (2026-10-03)
+- [x] Confirm `krc-ble-enable.service` brings `hci0` up after a **full reboot** (verified 2026-10-02; service since disabled, §7)
+- [x] Fallback chosen and tested: CSR8510 Classic USB dongle, pad in its Xbox mode (2026-10-03)
+- [x] Pad reconnects by itself after a full power loss and after a clean reboot (2026-10-03)
+- [ ] Check the BT link's range and latency against the 50 Hz teleop loop
+- [ ] Report the `btti_uart` oops (§7) upstream to BeagleBoard / TI, or retest on a newer kernel before re-enabling onboard BLE
+
+## 7. Boot hang: onboard BLE + USB dongle at boot (2026-10-03)
+
+### Symptom (boot hang)
+
+With the CSR8510 dongle plugged in, the board stopped booting usefully. The screen showed only a cursor in the top-left, SSH authenticated but never opened a session, and the green LED kept its heartbeat blink. Wi-Fi still answered ping and the pad even reconnected, so it looked like a power fault.
+
+### Diagnosis (boot hang)
+
+`journalctl --list-boots` plus `journalctl -b -N -k` on three failed boots showed the same sequence each time, about 20 s in:
+
+```text
+Bluetooth: hci1: Opcode 0x0c03 failed: -110          # HCI_Reset timed out on one adapter
+Unable to handle kernel NULL pointer dereference at virtual address 0000000000000e2c
+Internal error: Oops: 0000000096000006 [#1] SMP
+Workqueue: events btti_uart_tx_work [btti_uart]
+pc : btti_uart_tx_work+0x6c/0xe0 [btti_uart]
+```
+
+The oops is in `btti_uart`, the driver for the **onboard** CC3301's BLE, not in `btusb`. It kills a kernel worker and leaves logind and the desktop waiting forever. (The `cc33xx_adjust_channels` WARNINGs from `iwd` scans in the same logs are noisy but harmless; they also appear on good boots.)
+
+| Boot | Dongle | Onboard BLE | Result |
+|---|---|---|---|
+| Earlier 2026-10-03 | Hot-plugged after boot | On | Fine |
+| 3 × boots | Plugged in at boot | On | Oops at ~20 s, boot wedged |
+| Clean boot | Removed | On | Fine |
+| After fix (twice, incl. a reboot) | Plugged in at boot | **Off** | Fine; pad reconnects by itself |
+
+### Fix (boot hang)
+
+The pad needs Classic BT, which only the dongle provides, so the onboard BLE isn't needed. `krc-ble-enable.service` is **disabled** (`sudo systemctl disable krc-ble-enable`). debugfs `ble_enable` resets to 0 on every boot, so `btti` never registers an adapter and the crashing path never runs. `scripts/sudo-setup.sh --bluetooth` no longer installs it and disables it if found. The dongle is now `hci0`.
+
+Don't re-enable onboard BLE while the dongle is fitted unless the oops has been fixed upstream.

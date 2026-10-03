@@ -253,7 +253,7 @@ Code change: `motor.port=/dev/ttyAMA0`. No other change is needed (same protocol
 | | |
 |---|---|
 | Status | Wired **VERIFIED** (`045e:028e` through `xpad`, with rumble). BLE adapter **VERIFIED**; pad pairing **TO VERIFY** |
-| Wiring | A USB **data** cable into a **USB-A** port (the BeagleY-AI's USB-C is power-only). Or BLE through `scripts/bt-pair-gamepad.sh` |
+| Wiring | A USB **data** cable into a **USB-A** port (the BeagleY-AI's USB-C is power-only). Or Bluetooth Classic through the CSR8510 USB dongle, paired with `scripts/bt-pair-gamepad.sh` (the onboard radio is BLE-only and left off) |
 | Linux | `/dev/input/eventN`, auto-detected (`input.device=` to pin it) |
 | Code | L5 `exec::InputDriver` (exists), on its own discovery thread |
 
