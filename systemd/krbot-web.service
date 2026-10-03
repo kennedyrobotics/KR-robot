@@ -1,0 +1,12 @@
+[Unit]
+Description=KR-bot Web Monitor (krbot status as a web page; nginx proxies :80 to it)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/krc-robot/krbot_web.py --bind 127.0.0.1 --port 8765
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

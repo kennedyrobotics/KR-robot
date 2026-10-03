@@ -53,6 +53,15 @@ rm -f "${HOME}/Desktop/krbot-console.desktop" "${HOME}/.local/share/applications
 echo "    krbot.service: $(systemctl --user is-enabled krbot 2>/dev/null || echo installed) / $(systemctl --user is-active krbot 2>/dev/null)"
 [ -x "${APP_DIR}/krbot/build/krbot" ] || echo "    krbot not built yet: bash ${APP_DIR}/scripts/build-krbot.sh  (or 'u' in the console)"
 
+# View-only (plus E-STOP), so unlike krbot it is enabled straight away. Restart picks up a new deploy.
+echo "==> krbot-web user service (web monitor on 127.0.0.1:8765; nginx :80 via scripts/web-setup.sh)..."
+install -m 0644 "${APP_DIR}/systemd/krbot-web.service" "${HOME}/.config/systemd/user/krbot-web.service"
+if systemctl --user daemon-reload 2>/dev/null; then
+  systemctl --user enable krbot-web >/dev/null 2>&1
+  systemctl --user restart krbot-web
+  echo "    krbot-web.service: $(systemctl --user is-enabled krbot-web) / $(systemctl --user is-active krbot-web)"
+fi
+
 echo "==> Checking Python dependencies..."
 python3 -c "import serial; print('    pyserial', serial.__version__)" \
   || echo "    pyserial MISSING — run scripts/sudo-setup.sh"

@@ -25,6 +25,8 @@ See [../README.md](../README.md) for the architecture and [system-design.md](sys
 | `krbot_monitor_gui.py` | **KR-bot Monitor** desktop app: live status, events, E-STOP, and service control for `krbot` |
 | `scripts/krbot-console.sh` | Terminal view of `krbot` for SSH sessions |
 | `scripts/monitor-from-pc.ps1` | Runs KR-bot Monitor on the Windows PC through an SSH tunnel |
+| `krbot_web.py` + `web/` | **KR-bot Web Monitor**: the monitor in any browser on the LAN at `http://<robot-ip>/` (view + E-STOP only) |
+| `scripts/web-setup.sh` | One-time root setup for the web monitor: nginx site on :80 and a ufw rule for the local subnets |
 | `scripts/krc-diag.sh` | Reports what's connected and what's missing. Needs no sudo |
 | `scripts/bt-pair-gamepad.sh` | BLE scan, then pair, trust and connect the gamepad |
 | `scripts/sudo-setup.sh` | One-time root setup: udev `/dev/krc-motor`, groups, packages, systemd units, and optionally `--bluetooth` |
@@ -49,6 +51,7 @@ bash ~/krc-robot/scripts/sudo-setup.sh --bluetooth
 # then pair the pad: bash ~/krc-robot/scripts/bt-pair-gamepad.sh
 # log out/in so the dialout + input groups take effect
 bash ~/krc-robot/scripts/build-krbot.sh          # C++ stack: cmake + ninja + ctest (43 tests)
+bash ~/krc-robot/scripts/web-setup.sh            # web monitor: nginx :80 -> krbot-web, ufw allow 80 from local subnets
 ```
 
 The C++ build needs `libgtest-dev`, `ninja-build` and `libsqlite3-dev` from apt. These are already installed on the current board.
@@ -112,6 +115,7 @@ The C++ build needs `libgtest-dev`, `ninja-build` and `libsqlite3-dev` from apt.
 | Dry run (simulated motors) | Monitor → **Start DRY RUN**, or `systemctl --user set-environment KRBOT_ARGS=--dry-run` and then restart |
 | Watch it | **KR-bot Monitor** desktop icon. Over SSH: `bash ~/krc-robot/scripts/krbot-console.sh`, or `journalctl --user -u krbot -f` |
 | Watch it from the PC | `.\scripts\monitor-from-pc.ps1` in `Software\code`, which goes through an SSH tunnel |
+| Watch it from any browser | `http://<robot-ip>/` (KR-bot Web Monitor, `krbot-web.service`). Phone-friendly; view and E-STOP only |
 | After a deploy | Rebuild (Monitor → **Rebuild krbot**, or run `build-krbot.sh`), then **Restart** |
 | Run it in the foreground | Stop the service, then run `~/krc-robot/krbot/build/krbot [--dry-run] [--log=debug] [--section.key=value]` |
 

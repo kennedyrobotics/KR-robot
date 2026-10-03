@@ -11,6 +11,7 @@ KR-Robot is a skid-steer tracked robot. A BeagleY-AI (TI AM67A, Debian 13) runs 
 >
 > - The **C++ 5-layer stack** ([krbot/](krbot/)) runs as a systemd user service. Its 50 Hz manual-drive path, watchdog and goal arbiter work, and all 43 unit tests pass on the target.
 > - **KR-bot Monitor** ([§7.1](#71-kr-bot-monitor-monitoring-the-c-stack)) is its client/server monitoring window. It runs on the BeagleY-AI desktop, or on the PC through an SSH tunnel.
+> - **KR-bot Web Monitor** ([§7.1a](#71a-kr-bot-web-monitor-any-browser-on-the-lan)) shows the same view in any browser on the LAN, at `http://<robot-ip>/`, including on a phone.
 > - The Python bench tooling and the **KR-Robot Control** app are deployed.
 > - The SN2403 is verified wired (xpad). Onboard BLE is enabled and survives a reboot.
 > - **Next:** verify the motor board's serial protocol on the bench ([docs/bringup.md](docs/bringup.md)). Then Phase 1: CLIPS and BehaviorTree.CPP.
@@ -204,6 +205,7 @@ Only the L1 driver changes when the VIU replaces the Yahboom board. `IMotorContr
 | App / service | What it is | Runs |
 |---|---|---|
 | **KR-bot Monitor** ([krbot_monitor_gui.py](krbot_monitor_gui.py)) | Client for the production C++ stack: live status, events, E-STOP and service control | Board desktop icon, or the PC via `scripts\monitor-from-pc.ps1` |
+| **KR-bot Web Monitor** ([krbot_web.py](krbot_web.py) + [web/](web/)) | The monitor as a web page: live status, inputs, Controller checklist, events and E-STOP. No service control | Any browser on the LAN: `http://<robot-ip>/` |
 | **KR-Robot Control** ([krc_robot_gui.py](krc_robot_gui.py)) | Python bench app: teleop, bench pulse, protocol tools | Board desktop icon |
 | `krbot.service` (systemd **user** unit) | The C++ stack running headless | **Enabled at boot** since 2026-10-03 (with `loginctl enable-linger`, so no login is needed). Always comes up DISARMED. Start/stop from the monitor or with `systemctl --user` |
 | `krc-teleop.service` | Headless Python teleop (`tools/teleop.py`) | Installed, not enabled. Superseded by `krbot.service` |
@@ -232,6 +234,7 @@ flowchart LR
 |---|---|
 | **Overview** | Mode banner and deadman state. Cards for the server (uptime, version, dry-run), the gamepad and the motor board (watchdog trips). Live track PWM bars, and a **5-layer panel** (L5 loop and goal, L4 ticks and deltas, L3 fact count, L2 sources, L1 driver health) |
 | **Inputs** | Both sticks, plus the deadman / arm / e-stop / link state exactly as `krbot`'s control loop received them |
+| **Controller** | Every button and axis on the pad, live, with a press-each-one maintenance checklist and stick drift readout. Shows the device id and whether the BT button remap is active |
 | **Events** | Live log with level colours, follow, save. The periodic status lines are hidden by default |
 | **Service** | Start, Start DRY RUN, Stop, Restart, Boot on/off, Rebuild. These are local only; the tab is disabled when monitoring a remote host |
 
@@ -243,6 +246,23 @@ flowchart LR
 - The server binds to localhost only, and remote access goes through SSH. Binding it to the LAN needs an auth token first (open item).
 
 For SSH sessions there is also a terminal view: `bash ~/krc-robot/scripts/krbot-console.sh`.
+
+### 7.1a KR-bot Web Monitor: any browser on the LAN
+
+The same monitor as a web page, for the PC or a phone on the same network. Verified 2026-10-03 on a PC and a phone over Wi-Fi.
+
+```mermaid
+flowchart LR
+    B["Browsers on the LAN<br/>(PC, phone)"] -- "http :80<br/>page + SSE /events" --> N["nginx<br/>(ufw: local subnets only)"]
+    N -- "127.0.0.1:8765" --> W["krbot_web.py<br/>(krbot-web.service, user)"]
+    W -- "one TCP client<br/>127.0.0.1:5765" --> K["krbot<br/>MonitorServer"]
+```
+
+- **Server:** [krbot_web.py](krbot_web.py), stdlib only. It holds one connection to `krbot`'s monitor server and fans it out to up to 16 browsers with Server-Sent Events (status at 10 Hz, log lines as they happen, the last 200 log lines replayed on connect).
+- **Page:** [web/index.html](web/index.html), one self-contained file. Tabs: Overview, Inputs, Controller, Events. Follows the browser's light/dark setting and fits a phone. `/#controller` (etc.) opens a tab directly.
+- **Actions:** E-STOP only (button, Space or Esc), sent as `POST /api/estop` and logged with the client's address. **No arm, no service control** from the web, by design.
+- **Access:** nginx on port 80 proxies to `127.0.0.1:8765`. ufw allows port 80 only from the robot's own subnets. There is no login, so anyone on the LAN can watch and E-STOP.
+- **Setup:** `deploy.ps1` → `remote-setup.sh` installs and enables `krbot-web.service` (user unit, starts at boot). Once, with sudo: `bash ~/krc-robot/scripts/web-setup.sh` (nginx site + ufw rule; the stock nginx `default` site is unlinked, not deleted).
 
 ### 7.2 KR-Robot Control (Python bench app)
 
@@ -282,12 +302,13 @@ Safety rules in the GUI:
 |---|---|
 | [krbot/](krbot/) | **C++20 5-layer stack** (production). `src/{common,driver,percep,knowledge,reason,exec,core}`, `config/krbot.conf`, GoogleTest tests (43). Build with `scripts/build-krbot.sh` |
 | [krbot_monitor_gui.py](krbot_monitor_gui.py) | **KR-bot Monitor**, the client for krbot's monitor server. Runs on the board or the PC |
+| [krbot_web.py](krbot_web.py), [web/](web/) | **KR-bot Web Monitor**: web server (stdlib) and page. `web/nginx-krbot.conf` is the nginx site |
 | [krc_robot_gui.py](krc_robot_gui.py) | **KR-Robot Control**, the Python bench app |
 | [krc/](krc/) | Python modules:<br/>- `yahboom.py` (L1)<br/>- `joystick.py` and `drive.py` (L5)<br/>- `core.py` (the bench app's 50 Hz loop)<br/>- `monitor_client.py` (krbot protocol client)<br/>- `ui_theme.py` (shared look of both apps) |
 | [tools/](tools/) | Bench CLIs: `joystick-controller-debug.py`, `joy_test.py`, `yahboom_probe.py`, `teleop.py` |
 | [tests/](tests/) | Python unit tests, including the monitor client against a fake server. Run `python -m unittest discover -s tests` on Windows or the board |
-| [scripts/](scripts/) | Board scripts:<br/>- `build-krbot.sh`<br/>- `krbot-console.sh` (SSH terminal view)<br/>- `krc-diag.sh` (no sudo)<br/>- `bt-pair-gamepad.sh`<br/>- `sudo-setup.sh` (one-time root setup)<br/><br/>PC script: `monitor-from-pc.ps1` (SSH tunnel) |
-| [systemd/](systemd/) | `krbot.service` (user unit, enabled at boot), `krc-ble-enable.service` (disabled, see §4.1), `krc-teleop.service` (not enabled) |
+| [scripts/](scripts/) | Board scripts:<br/>- `build-krbot.sh`<br/>- `krbot-console.sh` (SSH terminal view)<br/>- `krc-diag.sh` (no sudo)<br/>- `bt-pair-gamepad.sh`<br/>- `sudo-setup.sh` (one-time root setup)<br/>- `web-setup.sh` (one-time root setup for the web monitor: nginx + ufw)<br/><br/>PC script: `monitor-from-pc.ps1` (SSH tunnel) |
+| [systemd/](systemd/) | `krbot.service` (user unit, enabled at boot), `krbot-web.service` (user unit, enabled at boot), `krc-ble-enable.service` (disabled, see §4.1), `krc-teleop.service` (not enabled) |
 | [udev/](udev/) | `/dev/krc-motor` symlink rule for the CH340K |
 | [docs/](docs/) | [bringup.md](docs/bringup.md) (bench procedure and running krbot), [system-design.md](docs/system-design.md) (doc v3 mapped onto code), [wiring-manual.md](docs/wiring-manual.md) (40-pin header, Yahboom and sensor wiring, plus the interface ICD), [test-validation.md](docs/test-validation.md) (test checklist from integration to requirements validation, with a traceability matrix) |
 | [notes/](notes/) | Engineering notes: motor control and joystick design note, Bluetooth debugging |
