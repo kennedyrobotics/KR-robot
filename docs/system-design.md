@@ -139,7 +139,7 @@ These are the hard rules. All of them are covered by unit tests in `krbot/tests/
 2. **Teleop state machine** (`TeleopController`, a 1:1 port of `krc/drive.py` with the same test cases):
    - The robot starts **DISARMED**.
    - ARM needs START, with LB released and the sticks centred.
-   - Output is produced only while the deadman (LB) is held. Releasing it zeroes the output instantly, with no slew.
+   - Output is produced only while the deadman (LB) is held. Releasing it zeroes the output with no slew, once LB has read released for `deadman_release_ms` (40 ms): a debounce against single all-buttons-up reports from the pad over BT. Link loss and E-STOP are not debounced.
    - **ESTOP** can be triggered by B/HOME, the watchdog, a motor fault, or an **external E-STOP**: a KR-bot Monitor `{"cmd":"estop"}`, or `SIGUSR1`. It latches, survives link loss, and is cleared only by re-arming with START.
    - **No external path can arm or drive.** The monitor protocol has no such command, and `SIGUSR1` only stops.
 3. **Gamepad link loss** (`ENODEV`, POLLHUP, EOF): ARMED drops to DISARMED. Reconnection is automatic, but the robot always comes back DISARMED.

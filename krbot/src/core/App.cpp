@@ -78,6 +78,7 @@ void App::start() {
     t.expo = static_cast<float>(cfg_.getDouble("teleop.expo", t.expo));
     t.turnScale = static_cast<float>(cfg_.getDouble("teleop.turn_scale", t.turnScale));
     t.slewPerS = static_cast<float>(cfg_.getDouble("teleop.slew_per_s", t.slewPerS));
+    t.deadmanReleaseMs = static_cast<int>(cfg_.getInt("teleop.deadman_release_ms", t.deadmanReleaseMs));
     t.tank = cfg_.getBool("teleop.tank", t.tank);
     t.invertLeft = cfg_.getBool("teleop.invert_left", t.invertLeft);
     t.invertRight = cfg_.getBool("teleop.invert_right", t.invertRight);

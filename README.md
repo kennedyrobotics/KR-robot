@@ -155,7 +155,7 @@ stateDiagram-v2
 
 ESTOP stays latched through a gamepad link loss, because it is stricter than DISARMED.
 
-- **Deadman:** output is non-zero only while LB is held. Releasing LB zeroes the output instantly, with no slew.
+- **Deadman:** output is non-zero only while LB is held. Releasing LB zeroes the output, with no slew, once LB has read released for `teleop.deadman_release_ms` (40 ms, 2 ticks). The debounce stops the SN2403's single all-buttons-up BT reports from stopping the robot ([notes §8](notes/bluetooth-debugging.md)). Link loss and E-STOP are not debounced.
 - **Stopping is easy, re-arming is deliberate.** E-stop latches. Re-arming requires releasing everything and then pressing START.
 - **Link loss means a safe stop.** A pad unplug, a Bluetooth drop, or the pad's 5-minute auto-sleep raises `ENODEV`, which disarms the robot. Reconnection is automatic but always comes back DISARMED.
 - **Motor link loss** (a serial error):
