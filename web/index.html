@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KR-bot Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='4' width='12' height='8' rx='2' fill='%2389b4fa'/%3E%3C/svg%3E">
+<!-- Web twin of krbot_monitor_gui.py; served by krbot_web.py. Colours follow krc/ui_theme.py. -->
+<style>
+  :root {
+    --bg: #1e1e2e; --panel: #313244; --entry: #11111b; --text: #cdd6f4; --muted: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --good: #a6e3a1; --bad: #f38ba8; --warn: #fab387; --estop: #d20f39; --on-fill: #1e1e2e;
+    --mono: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eff1f5; --panel: #ffffff; --entry: #e6e9ef; --text: #4c4f69; --muted: #5c5f77; --dim: #9ca0b0;
+      --accent: #1e66f5; --good: #40a02b; --bad: #d20f39; --warn: #df8e1d; --on-fill: #ffffff;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #eff1f5; --panel: #ffffff; --entry: #e6e9ef; --text: #4c4f69; --muted: #5c5f77; --dim: #9ca0b0;
+    --accent: #1e66f5; --good: #40a02b; --bad: #d20f39; --warn: #df8e1d; --on-fill: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--ui); }
+  header { display: flex; gap: 12px; align-items: stretch; padding: 12px 16px; position: sticky; top: 0;
+           background: var(--bg); z-index: 2; border-bottom: 1px solid var(--panel); }
+  #mode { min-width: 128px; display: grid; place-items: center; font: 700 20px var(--ui); border-radius: 6px;
+          background: var(--dim); color: var(--on-fill); padding: 6px 12px; }
+  #headmid { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+  #reason { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #links { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #estop { background: var(--estop); color: #fff; border: 0; border-radius: 6px; font: 700 18px var(--ui);
+           padding: 0 22px; cursor: pointer; box-shadow: 0 3px 0 #8a0a26; }
+  #estop:active { transform: translateY(2px); box-shadow: 0 1px 0 #8a0a26; }
+  nav { display: flex; gap: 4px; padding: 8px 16px 0; overflow-x: auto; }
+  nav button { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent;
+               padding: 8px 14px; font: 600 14px var(--ui); cursor: pointer; white-space: nowrap; }
+  nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  main { padding: 12px 16px 24px; max-width: 1200px; margin: 0 auto; }
+  .tab { display: none; } .tab.on { display: block; }
+  .banner { border-radius: 6px; padding: 10px 14px; font: 700 16px var(--ui); color: var(--on-fill); background: var(--dim); margin-bottom: 12px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 12px; }
+  section { background: var(--panel); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; min-width: 0; }
+  .grid section { margin-bottom: 0; }
+  h2 { margin: 0 0 8px; font: 700 13px var(--ui); color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+  dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; }
+  dt { color: var(--muted); } dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); } .dimc { color: var(--dim); }
+  .bar { position: relative; height: 22px; background: var(--entry); border-radius: 4px; overflow: hidden; flex: 1; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; background: var(--dim); }
+  .bar .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--dim); }
+  .row { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+  .row .lbl { width: 96px; color: var(--muted); flex: none; }
+  .row .val { width: 64px; text-align: right; font: 700 14px var(--mono); flex: none; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .note { color: var(--dim); font-style: italic; font-size: 12px; margin: 6px 0 0; }
+  .sticks { display: flex; gap: 16px; flex-wrap: wrap; }
+  .stick { text-align: center; } .stick svg { width: 170px; height: 170px; max-width: 42vw; max-height: 42vw; }
+  .pill { display: block; padding: 8px 12px; margin: 6px 0; border-radius: 4px; background: var(--entry);
+          color: var(--muted); font: 14px var(--mono); border: 1px solid var(--dim); }
+  .pill.on { background: var(--accent); color: var(--on-fill); } .pill.on.good { background: var(--good); }
+  .pill.on.bad { background: var(--bad); color: var(--on-fill); }
+  #padsvg { width: 100%; max-width: 560px; height: auto; display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; color: var(--dim); font-weight: 700; padding: 3px 6px; }
+  td { padding: 3px 6px; border-top: 1px solid var(--entry); } td.c { font-family: var(--mono); }
+  .padwrap { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  @media (max-width: 860px) { .padwrap { grid-template-columns: minmax(0, 1fr); } }
+  .tablewrap { overflow-x: auto; }
+  .btn { background: var(--accent); color: var(--on-fill); border: 0; border-radius: 4px; padding: 6px 12px; font: 600 13px var(--ui); cursor: pointer; }
+  #log { background: var(--entry); border-radius: 6px; padding: 8px; height: 60vh; overflow: auto; font: 12px/1.35 var(--mono);
+         white-space: pre; margin: 0; }
+  #log .WARN { color: var(--warn); } #log .ERROR { color: var(--bad); } #log .DEBUG { color: var(--dim); } #log .monitor { color: var(--accent); }
+  .tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  label { color: var(--muted); }
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; padding: 10px 16px; }
+    #mode { min-width: 96px; font-size: 16px; } #estop { flex: 1 0 100%; padding: 10px; order: 3; }
+    #reason { white-space: normal; }
+    th, td { padding: 3px 4px; } .row .lbl { width: 72px; } .row .val { width: 52px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div id="mode">OFFLINE</div>
+  <div id="headmid"><div id="reason">connecting…</div><div id="links"></div></div>
+  <button id="estop" title="Latched E-STOP (Space / Esc). Re-arm only from the gamepad.">E-STOP</button>
+</header>
+<nav role="tablist">
+  <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+  <button role="tab" data-tab="inputs">Inputs</button>
+  <button role="tab" data-tab="controller">Controller</button>
+  <button role="tab" data-tab="events">Events</button>
+</nav>
+<main>
+  <div class="tab on" id="tab-overview">
+    <div class="banner" id="deadman">no live data from krbot</div>
+    <div class="grid">
+      <section><h2>krbot server</h2><dl id="c-srv"></dl></section>
+      <section><h2>Gamepad (L5)</h2><dl id="c-pad"></dl></section>
+      <section><h2>Motor board (L1)</h2><dl id="c-mot"></dl></section>
+    </div>
+    <section><h2>Track output (PWM)</h2>
+      <div class="row"><span class="lbl">Left (M1)</span><div class="bar"><div class="mid"></div><div class="fill" id="out-l"></div></div><span class="val" id="out-lv">0</span></div>
+      <div class="row"><span class="lbl">Right (M2)</span><div class="bar"><div class="mid"></div><div class="fill" id="out-r"></div></div><span class="val" id="out-rv">0</span></div>
+    </section>
+    <section><h2>5-layer stack (Design doc v3)</h2><dl id="c-layer"></dl></section>
+    <section><h2>Controls</h2>
+      <div class="mono">Gamepad: START arm (LB released, sticks centred) · hold LB deadman · B/HOME e-stop</div>
+      <div class="mono">This page: Space / Esc / E-STOP button → latched E-STOP. Re-arm only from the gamepad.</div>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-inputs">
+    <div class="grid">
+      <section><h2>Sticks</h2><div class="sticks" id="sticks"></div></section>
+      <section><h2>Teleop buttons (as krbot sees them)</h2><div id="tbtns"></div></section>
+    </div>
+    <p class="note">Shows the inputs krbot's control loop received on its last tick (10 Hz snapshot).</p>
+  </div>
+
+  <div class="tab" id="tab-controller">
+    <div class="tools"><span class="mono" id="padinfo"></span><span style="flex:1"></span><button class="btn" id="padreset">Reset checklist</button></div>
+    <div class="padwrap">
+      <section><h2>Live — lit while pressed</h2>
+        <svg id="padsvg" viewBox="0 0 560 300" role="img" aria-label="Gamepad state"></svg>
+        <div class="mono" id="padaxes" style="margin-top:6px"></div>
+        <div class="mono warn" id="padother"></div>
+      </section>
+      <section><h2>Maintenance checklist — press / move each one</h2>
+        <div class="tablewrap"><table><thead><tr><th>control</th><th>role</th><th>now</th><th>presses</th><th>ok</th></tr></thead><tbody id="chk"></tbody></table></div>
+        <div id="padsum" style="margin-top:8px;font-weight:700" class="dimc"></div>
+      </section>
+    </div>
+    <p class="note">Press counts come from krbot, so a quick tap between 10 Hz snapshots still counts. Sticks, triggers and D-pad are sampled at 10 Hz: hold each direction briefly. View only: nothing here drives the robot.</p>
+  </div>
+
+  <div class="tab" id="tab-events">
+    <div class="tools">
+      <button class="btn" id="logclear">Clear</button>
+      <label><input type="checkbox" id="logfollow" checked> follow</label>
+      <label><input type="checkbox" id="logperiodic"> show periodic status lines</label>
+    </div>
+    <pre id="log"></pre>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const STALE_MS = 1500;
+const PAD_BUTTONS = [["A",0x130],["B",0x131],["X",0x134],["Y",0x133],["LB",0x136],["RB",0x137],
+                     ["BACK",0x13A],["START",0x13B],["HOME",0x13C],["LS",0x13D],["RS",0x13E]];
+const ROLES = {LB:"deadman", START:"arm", B:"e-stop", HOME:"e-stop"};
+const ABS = {X:0, Y:1, Z:2, RX:3, RY:4, RZ:5, GAS:9, BRAKE:10, HX:16, HY:17};
+const FULL = 0.9;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let st = {}, link = {}, lastStatus = 0, sseUp = false;
+
+// ---------------------------------------------------------------- tabs
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.id === "tab-" + b.dataset.tab));
+  try { localStorage.setItem("krbot-tab", b.dataset.tab); } catch (e) {}
+});
+{ // a link like /#controller opens that tab; otherwise the last tab this browser used
+  let t = location.hash.slice(1);
+  try { if (!t) t = localStorage.getItem("krbot-tab"); } catch (e) {}
+  if (t) document.querySelector(`nav button[data-tab="${CSS.escape(t)}"]`)?.click();
+}
+
+// ---------------------------------------------------------------- e-stop
+async function estop() {
+  try {
+    const r = await fetch("api/estop", {method: "POST"});
+    appendLog([{level: "monitor", line: `${new Date().toLocaleTimeString()}  [this page] E-STOP ${r.ok ? "sent" : "NOT sent (krbot not connected)"}`}]);
+  } catch (e) {
+    appendLog([{level: "ERROR", line: `[this page] E-STOP failed: web server unreachable`}]);
+  }
+}
+$("estop").onclick = estop;
+document.addEventListener("keydown", (e) => {
+  if ((e.code === "Space" || e.code === "Escape") && !["INPUT", "BUTTON"].includes(e.target.tagName)) { e.preventDefault(); estop(); }
+});
+
+// ---------------------------------------------------------------- static builders
+function dl(id, keys) { $(id).innerHTML = keys.map((k) => `<dt>${k}</dt><dd id="${id}-${k.replace(/\W/g, "")}">—</dd>`).join(""); }
+dl("c-srv", ["link", "endpoint", "version", "uptime", "motors mode"]);
+dl("c-pad", ["status", "device", "drops"]);
+dl("c-mot", ["status", "driver", "watchdog"]);
+dl("c-layer", ["L5", "L4", "L3", "L2", "L1"]);
+const setdd = (id, text, cls) => { const e = $(id); e.textContent = text; e.className = cls || ""; };
+
+function stickSvg(r) {
+  return `<svg viewBox="0 0 170 170"><circle cx="85" cy="85" r="78" fill="var(--entry)" stroke="var(--dim)"/>
+    <line x1="85" y1="6" x2="85" y2="164" stroke="var(--panel)"/><line x1="6" y1="85" x2="164" y2="85" stroke="var(--panel)"/>
+    <circle id="${r}" cx="85" cy="85" r="8" fill="var(--accent)"/></svg>`;
+}
+$("sticks").innerHTML = [["Left stick (throttle)", "sl"], ["Right stick (steer)", "sr"]]
+  .map(([t, id]) => `<div class="stick"><div class="dimc">${t}</div>${stickSvg(id)}<div class="mono" id="${id}v"></div></div>`).join("");
+$("tbtns").innerHTML = [["deadman", "LB  deadman"], ["arm", "START  arm"], ["estop", "B / HOME  e-stop"], ["link", "gamepad link"]]
+  .map(([k, t]) => `<span class="pill" id="tb-${k}">${t}</span>`).join("");
+
+// pad picture (same geometry as the desktop monitor's Controller tab)
+(function buildPad() {
+  const s = [];
+  s.push(`<path d="M90 70 L470 70 Q520 90 520 150 L510 270 Q480 290 440 285 L380 235 L180 235 L120 285 Q80 290 50 270 L40 150 Q40 90 90 70 Z" fill="var(--panel)" stroke="var(--dim)" stroke-width="2"/>`);
+  for (const [side, x0] of [["L", 80], ["R", 380]]) {
+    s.push(`<rect x="${x0}" y="8" width="100" height="20" fill="var(--entry)" stroke="var(--muted)" stroke-width="2"/>`,
+           `<rect id="p-${side}T" x="${x0}" y="8" width="0" height="20" fill="var(--accent)"/>`,
+           `<text x="${x0 + 50}" y="22" class="pt">${side}T</text>`,
+           `<rect id="p-${side}B" x="${x0}" y="36" width="100" height="22" rx="4" fill="var(--entry)" stroke="var(--muted)" stroke-width="2"/>`,
+           `<text x="${x0 + 50}" y="52" class="pt">${side}B</text>`);
+  }
+  for (const [n, cx, cy] of [["LS", 150, 135], ["RS", 340, 200]]) {
+    s.push(`<circle id="p-${n}" cx="${cx}" cy="${cy}" r="36" fill="var(--entry)" stroke="var(--muted)" stroke-width="2"/>`,
+           `<circle id="p-${n}dot" cx="${cx}" cy="${cy}" r="9" fill="var(--accent)"/>`,
+           `<text x="${cx}" y="${cy + 52}" class="pt dim">${n}</text>`);
+  }
+  for (const [n, dx, dy] of [["DU", 0, -1], ["DD", 0, 1], ["DL", -1, 0], ["DR", 1, 0]])
+    s.push(`<rect id="p-${n}" x="${210 + dx * 20}" y="${190 + dy * 20}" width="20" height="20" fill="var(--entry)" stroke="var(--muted)" stroke-width="2"/>`);
+  s.push(`<text x="220" y="246" class="pt dim">D-pad</text>`);
+  for (const [n, x, y, r, t] of [["Y", 420, 105, 15, "Y"], ["X", 390, 135, 15, "X"], ["B", 450, 135, 15, "B"], ["A", 420, 165, 15, "A"],
+                                  ["BACK", 235, 125, 12, "⧉"], ["HOME", 280, 95, 16, "◎"], ["START", 325, 125, 12, "≡"]])
+    s.push(`<circle id="p-${n}" cx="${x}" cy="${y}" r="${r}" fill="var(--entry)" stroke="var(--muted)" stroke-width="2"/>`,
+           `<text x="${x}" y="${y + 4}" class="pt">${t}</text>`);
+  $("padsvg").innerHTML = `<style>.pt{fill:var(--text);font:700 11px var(--ui);text-anchor:middle;pointer-events:none}.pt.dim{fill:var(--muted);font-weight:400}</style>` + s.join("");
+})();
+
+const CHK_ROWS = PAD_BUTTONS.map(([n]) => n).concat(["LT", "RT", "L-stick", "R-stick", "D-pad"]);
+$("chk").innerHTML = CHK_ROWS.map((n) => {
+  const role = ROLES[n] || (n === "LT" || n === "RT" ? "full travel" : (n.includes("stick") || n === "D-pad") ? "4 ways" : "");
+  const id = n.replace(/\W/g, "");
+  return `<tr><td class="c">${n}</td><td class="${["deadman", "arm", "e-stop"].includes(role) ? "warn" : "dimc"}">${role}</td>` +
+         `<td class="c" id="k-now-${id}"></td><td class="c" id="k-cnt-${id}"></td><td class="c good" id="k-ok-${id}"></td></tr>`;
+}).join("");
+
+let padBase = {}, padSeen = new Set();
+function padReset() {
+  padBase = {}; padSeen = new Set();
+  for (const [k, v] of Object.entries(st.pad?.buttons || {})) padBase[+k] = v[1];
+}
+$("padreset").onclick = padReset;
+
+// ---------------------------------------------------------------- render
+const fmtUp = (s) => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return h ? `${h}h ${String(m).padStart(2, "0")}m ${String(x).padStart(2, "0")}s` : `${m}m ${String(x).padStart(2, "0")}s`; };
+
+function setBar(id, v, colour) {
+  v = Math.max(-1, Math.min(1, v)); const e = $(id);
+  e.style.left = (50 + Math.min(0, v) * 50) + "%"; e.style.width = (Math.abs(v) * 50) + "%"; e.style.background = colour;
+}
+
+function render() {
+  const now = performance.now();
+  const s = st, connected = sseUp && link.connected;
+  const stale = connected && s.mode && now - lastStatus > STALE_MS;
+  let mode, colour, reason;
+  if (!sseUp) { mode = "OFFLINE"; colour = css("--dim"); reason = "web server unreachable, retrying…"; }
+  else if (!link.connected) { mode = "OFFLINE"; colour = css("--dim"); reason = `krbot not reachable: ${link.error || "connecting…"} (is the service running?)`; }
+  else if (!s.mode) { mode = "WAITING"; colour = css("--dim"); reason = "connected, waiting for first status"; }
+  else if (stale) { mode = "STALE"; colour = css("--warn"); reason = `no status for ${((now - lastStatus) / 1000).toFixed(1)} s`; }
+  else { mode = s.mode; colour = {ARMED: css("--good"), DISARMED: css("--warn"), ESTOP: css("--bad")}[mode] || css("--warn");
+         reason = (s.mode_reason || "") + (s.dry_run ? "   [DRY RUN, simulated motors]" : ""); }
+  const live = connected && !!s.mode && !stale;
+  $("mode").textContent = mode; $("mode").style.background = colour; $("reason").textContent = reason;
+  const pad = s.gamepad || {}, mot = s.motors || {}, inp = s.inputs || {};
+  $("links").textContent = live ? `krbot: OK    gamepad: ${pad.connected ? "OK" : "none"}    motors: ${mot.healthy ? "OK" : "FAULT"}    loop: ${(s.loop_hz || 0).toFixed(0)} Hz    viewers: ${link.viewers ?? "-"}`
+                                : `krbot: ${link.connected ? "connected" : "DOWN"}`;
+  const dm = $("deadman");
+  if (live && mode === "ARMED" && inp.deadman) { dm.textContent = "●  DEADMAN HELD — ROBOT LIVE"; dm.style.background = css("--good"); }
+  else if (live && mode === "ARMED") { dm.textContent = "○  ARMED — hold LB to drive"; dm.style.background = css("--warn"); }
+  else if (live) { dm.textContent = `○  ${mode} — press START on the gamepad to arm`; dm.style.background = css("--bad"); }
+  else { dm.textContent = "○  no live data from krbot"; dm.style.background = css("--dim"); }
+
+  setdd("c-srv-link", link.connected ? "connected" : "disconnected", link.connected ? "good" : "bad");
+  setdd("c-srv-endpoint", `${link.host || "?"}:${link.port || "?"}  (clients ${s.monitor_clients ?? "-"})`);
+  setdd("c-srv-version", s.version || link.version || "—");
+  setdd("c-srv-uptime", s.uptime_s != null ? fmtUp(s.uptime_s) : "—");
+  setdd("c-srv-motorsmode", s.mode ? (s.dry_run ? "DRY RUN" : "real board") : "—", s.dry_run ? "warn" : "");
+  setdd("c-pad-status", s.mode ? (pad.connected ? "connected" : "waiting…") : "—", pad.connected ? "good" : "bad");
+  setdd("c-pad-device", pad.name || "—");
+  setdd("c-pad-drops", String(pad.disconnects ?? "—"));
+  setdd("c-mot-status", s.mode ? (mot.healthy ? "healthy" : "FAULT") : "—", mot.healthy ? "good" : "bad");
+  setdd("c-mot-driver", mot.desc || "—");
+  const wd = s.watchdog || {};
+  setdd("c-mot-watchdog", `${wd.trips ?? "-"} trips / ${wd.timeout_ms ?? "-"} ms`, wd.trips ? "bad" : "");
+
+  const out = s.out || {}, scale = Math.max(1, s.max_output || 1800);
+  for (const [k, id] of [["left", "out-l"], ["right", "out-r"]]) {
+    const v = out[k] || 0; setBar(id, v / scale, v ? css("--good") : css("--dim"));
+    $(id + "v").textContent = (v >= 0 ? "+" : "") + v;
+  }
+  const g = s.goal || {}, rs = s.reasoner || {};
+  const goal = g.type ? `${g.type}(${g.target}) prio ${g.priority} ${g.task}` : "none";
+  setdd("c-layer-L5", s.mode ? `${mode} loop ${(s.loop_hz || 0).toFixed(0)} Hz | goal ${goal} | pending ${g.pending || 0}` : "—");
+  setdd("c-layer-L4", s.mode ? `NullReasoner (CLIPS in Phase 1) | ticks ${rs.ticks || 0} | deltas ${rs.deltas || 0} | saturated ${rs.saturated || 0}` : "—");
+  setdd("c-layer-L3", s.mode ? `FactStore: ${s.facts || 0} facts` : "—");
+  setdd("c-layer-L2", s.mode ? "PerceptionLoop: motor-link health source" : "—");
+  setdd("c-layer-L1", s.mode ? `${mot.desc || "—"} | ${mot.healthy ? "healthy" : "FAULT"}` : "—");
+
+  for (const [id, kx, ky] of [["sl", "lx", "ly"], ["sr", "rx", "ry"]]) {
+    const x = inp[kx] || 0, y = inp[ky] || 0, d = $(id);
+    d.setAttribute("cx", 85 + x * 70); d.setAttribute("cy", 85 + y * 70);
+    d.setAttribute("fill", Math.abs(x) > 0.08 || Math.abs(y) > 0.08 ? css("--good") : css("--accent"));
+    $(id + "v").textContent = `x ${x >= 0 ? "+" : ""}${x.toFixed(2)}  y ${y >= 0 ? "+" : ""}${y.toFixed(2)}`;
+  }
+  for (const k of ["deadman", "arm", "estop", "link"]) {
+    const on = live && !!inp[k]; const e = $("tb-" + k);
+    e.className = "pill" + (on ? " on" + (k === "link" ? " good" : k === "estop" ? " bad" : "") : "");
+  }
+  renderPad(live, s.pad || {}, !!pad.connected);
+}
+
+function renderPad(live, pad, connected) {
+  const ok = live && connected;
+  const keys = new Set(ok ? pad.keys || [] : []);
+  const btns = {}; for (const [k, v] of Object.entries(ok ? pad.buttons || {} : {})) btns[+k] = v;
+  const axes = {}; for (const [k, v] of Object.entries(ok ? pad.axes || {} : {})) axes[+k] = v;
+  $("padinfo").textContent = ok ? `${st.gamepad?.name || "gamepad"}  id ${pad.id || "—"}${pad.remap ? "  [button remap active]" : ""}`
+                                : live ? "no gamepad connected to krbot" : "no live data from krbot";
+  let nOk = 0, nTot = 0;
+  for (const [n, code] of PAD_BUTTONS) {
+    const [down, count] = btns[code] || [0, 0];
+    if (count < (padBase[code] || 0)) padBase[code] = 0;           // pad reconnected: krbot's counts restarted
+    const pressed = count - (padBase[code] || 0), present = keys.has(code);
+    const lit = ROLES[n] === "e-stop" ? css("--bad") : css("--good");
+    const el = $("p-" + n);
+    el.setAttribute("fill", down ? lit : css("--entry"));
+    el.setAttribute("stroke-dasharray", present || !keys.size ? "" : "4 4");
+    el.setAttribute("stroke", present || !keys.size ? css("--muted") : css("--dim"));
+    $("k-now-" + n).innerHTML = down ? `<span style="color:${lit}">●</span>` : `<span class="dimc">○</span>`;
+    $("k-cnt-" + n).innerHTML = present ? String(pressed) : `<span class="dimc">absent</span>`;
+    $("k-ok-" + n).textContent = pressed > 0 ? "✓" : "";
+    if (present) { nTot++; if (pressed > 0) nOk++; }
+  }
+  const ax = (...codes) => { for (const c of codes) if (c in axes) return axes[c]; return 0; };
+  const lt = ax(ABS.Z, ABS.BRAKE), rt = ax(ABS.RZ, ABS.GAS);
+  for (const [side, v] of [["L", lt], ["R", rt]]) {
+    $(`p-${side}T`).setAttribute("width", 100 * Math.max(0, Math.min(1, v)));
+    if (v > FULL) padSeen.add(side + "T");
+  }
+  const sticks = {"L-stick": ["LS", 150, 135, ax(ABS.X), ax(ABS.Y)], "R-stick": ["RS", 340, 200, ax(ABS.RX), ax(ABS.RY)]};
+  for (const [row, [n, cx, cy, x, y]] of Object.entries(sticks)) {
+    $(`p-${n}dot`).setAttribute("cx", cx + x * 27); $(`p-${n}dot`).setAttribute("cy", cy + y * 27);
+    for (const [a, v] of [["x", x], ["y", y]]) if (Math.abs(v) > FULL) padSeen.add(`${row}${v > 0 ? "+" : "-"}${a}`);
+  }
+  const hx = ax(ABS.HX), hy = ax(ABS.HY);
+  for (const [n, on] of [["DU", hy < -0.5], ["DD", hy > 0.5], ["DL", hx < -0.5], ["DR", hx > 0.5]]) {
+    $("p-" + n).setAttribute("fill", on ? css("--good") : css("--entry"));
+    if (on) padSeen.add(n);
+  }
+  const axisRow = (row, nowText, need, arrows) => {
+    const id = row.replace(/\W/g, ""), got = need.filter((n) => padSeen.has(n)).length;
+    $("k-now-" + id).textContent = nowText;
+    $("k-cnt-" + id).textContent = need.map((n, i) => padSeen.has(n) ? arrows[i] : "·").join("");
+    $("k-ok-" + id).textContent = got === need.length ? "✓" : "";
+    if (Object.keys(axes).length) { nTot++; if (got === need.length) nOk++; }
+  };
+  axisRow("LT", lt.toFixed(2), ["LT"], ["■"]);
+  axisRow("RT", rt.toFixed(2), ["RT"], ["■"]);
+  for (const row of Object.keys(sticks)) axisRow(row, "", [`${row}-y`, `${row}+y`, `${row}-x`, `${row}+x`], ["↑", "↓", "←", "→"]);
+  axisRow("D-pad", "", ["DU", "DD", "DL", "DR"], ["↑", "↓", "←", "→"]);
+  const f = (v) => (v >= 0 ? "+" : "") + v.toFixed(3);
+  $("padaxes").textContent = Object.keys(axes).length
+    ? `L x ${f(ax(ABS.X))} y ${f(ax(ABS.Y))}   R x ${f(ax(ABS.RX))} y ${f(ax(ABS.RY))}   LT ${lt.toFixed(3)} RT ${rt.toFixed(3)}   hat ${hx},${hy}   (centred sticks ≈ 0.000: drift check)` : "";
+  const known = new Set(PAD_BUTTONS.map(([, c]) => c));
+  const other = [...keys].filter((c) => !known.has(c)).sort((a, b) => a - b)
+    .map((c) => "0x" + c.toString(16).padStart(3, "0") + ((btns[c] || [0])[0] ? "●" : ""));
+  $("padother").textContent = other.length ? `other key codes on this device (not used by teleop): ${other.join(" ")}` : "";
+  const sum = $("padsum");
+  sum.textContent = `${nOk} / ${nTot} confirmed` + (nTot && nOk === nTot ? "  — ALL OK" : "");
+  sum.className = nTot && nOk === nTot ? "good" : "dimc";
+}
+
+// ---------------------------------------------------------------- log
+function appendLog(lines) {
+  const box = $("log"), periodic = $("logperiodic").checked, frag = document.createDocumentFragment();
+  for (const m of lines) {
+    if (!periodic && m.line.includes("[core]") && m.line.includes("| pad ")) continue;
+    const span = document.createElement("span"); span.className = m.level; span.textContent = m.line + "\n"; frag.appendChild(span);
+  }
+  box.appendChild(frag);
+  while (box.childNodes.length > 3000) box.removeChild(box.firstChild);
+  if ($("logfollow").checked) box.scrollTop = box.scrollHeight;
+}
+$("logclear").onclick = () => { $("log").textContent = ""; };
+
+// ---------------------------------------------------------------- stream
+function connect() {
+  const es = new EventSource("events");
+  es.onopen = () => { sseUp = true; };
+  es.addEventListener("status", (e) => {
+    const d = JSON.parse(e.data); link = d.link || {}; st = d.status || {};
+    if (st.mode) lastStatus = performance.now();
+  });
+  es.addEventListener("logs", (e) => appendLog(JSON.parse(e.data)));
+  es.onerror = () => { sseUp = false; };          // EventSource retries by itself
+}
+connect();
+setInterval(render, 100);
+render();
+</script>
+</body>
+</html>
