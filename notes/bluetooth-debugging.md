@@ -21,7 +21,7 @@ Findings from bringing up the SN2403 gamepad on the BeagleY-AI, on 2026-10-01. T
 | Onboard radio capability | **BLE only.** No Classic (BR/EDR). The SN2403 pairs over it only if its "Xbox Wireless Controller" emulation uses BLE |
 | Pad over BLE | **Not possible.** The pad's "Xbox Wireless Controller" mode is Classic BT HID (`045e:02e0`, firmware 0903) |
 | Pad over Classic BT (2026-10-03) | **Works** via a CSR8510 A10 USB dongle (`0a12:0001`, `btusb`, `hci1`). Paired, trusted and connected as `/dev/input/event5`. `scripts/bt-pair-gamepad.sh` now picks the BR/EDR-capable adapter |
-| Button layout over BT | **Non-standard; remapped in software.** hid-generic puts HID buttons 1–10 on 0x130–0x139 and the Xbox button on KEY_MENU (0x08b). `BUTTON_REMAPS` in `krc/joystick.py` and `buttonRemapFor()` in `krbot/src/exec/InputDriver.cpp` translate to standard codes for this pad only. Measured: A–RB, LS/RS, LT/RT. **To confirm on the monitor's Controller tab:** BACK / START / HOME (one of the three sent no event in testing) |
+| Button layout over BT | **Non-standard; remapped in software.** hid-generic puts HID buttons 1–10 on 0x130–0x139 and the Xbox button on KEY_MENU (0x08b). `BUTTON_REMAPS` in `krc/joystick.py` and `buttonRemapFor()` in `krbot/src/exec/InputDriver.cpp` translate to standard codes for this pad only. Measured: A–RB, LS/RS, LT/RT. Confirmed on the robot 2026-10-03 with the tracks off the ground: HOME e-stops, LB is the deadman, START arms, sticks drive the tracks as expected. BACK (unused by teleop) not confirmed; in raw captures one small button sent no event at all |
 
 ---
 
