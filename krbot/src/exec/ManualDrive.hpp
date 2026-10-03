@@ -37,6 +37,11 @@ struct ManualDriveStatus {
     double loopHz = 0;
     std::size_t padDisconnects = 0;
     TeleopInputs inputs;  // last inputs fed to the controller (for monitoring)
+    // Full pad state for the monitor's Controller tab (maintenance check of every button/axis).
+    GamepadState pad;
+    std::set<int> padKeys;
+    std::string padId;
+    bool padRemapped = false;
 };
 
 class ManualDrive {

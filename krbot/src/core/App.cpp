@@ -192,7 +192,7 @@ std::string App::snapshotJson() const {
         R"("motors":{{"healthy":{},"desc":{}}},"loop_hz":{:.1f},)"
         R"("watchdog":{{"trips":{},"timeout_ms":{}}},"facts":{},)"
         R"("reasoner":{{"ticks":{},"saturated":{},"deltas":{}}},)"
-        R"("goal":{{"type":{},"target":{},"task":{},"priority":{},"pending":{}}},"monitor_clients":{})",
+        R"("goal":{{"type":{},"target":{},"task":{},"priority":{},"pending":{}}},"monitor_clients":{},"pad":{})",
         uptime, json::boolean(dry), json::quote(exec::toString(s.mode)), json::quote(s.reason), s.out.left,
         s.out.right, cfg_.getInt("teleop.max_output", 1800), in.lx, in.ly, in.rx, in.ry, json::boolean(in.deadman),
         json::boolean(in.arm), json::boolean(in.estop), json::boolean(in.linkOk), json::boolean(s.padConnected),
@@ -200,7 +200,23 @@ std::string App::snapshotJson() const {
         json::quote(drivers_ ? drivers_->motorDescription() : ""), s.loopHz, watchdog_ ? watchdog_->trips() : 0,
         cfg_.getInt("watchdog.timeout_ms", 200), facts_ ? facts_->size() : 0, reason_ ? reason_->ticks() : 0,
         reason_ ? reason_->saturatedTicks() : 0, reason_ ? reason_->deltasSynced() : 0, json::quote(g.type),
-        json::quote(g.target), json::quote(g.task), g.priority, g.pending, monitor_ ? monitor_->clientCount() : 0);
+        json::quote(g.target), json::quote(g.task), g.priority, g.pending, monitor_ ? monitor_->clientCount() : 0,
+        padJson(s));
+}
+
+// Full gamepad state for the monitor's Controller tab. Keys are linux evdev codes (decimal strings, after any
+// button remap); "buttons" values are [pressed, presses-since-connect] so a tap between snapshots still shows.
+std::string App::padJson(const exec::ManualDriveStatus& s) {
+    std::string keys, buttons, axes;
+    for (const int k : s.padKeys) keys += std::format("{}{}", keys.empty() ? "" : ",", k);
+    for (const int k : s.padKeys) {
+        const auto it = s.pad.presses.find(k);
+        buttons += std::format(R"({}"{}":[{},{}])", buttons.empty() ? "" : ",", k, s.pad.button(k) ? 1 : 0,
+                               it == s.pad.presses.end() ? 0u : it->second);
+    }
+    for (const auto& [code, v] : s.pad.axes) axes += std::format(R"({}"{}":{:.3f})", axes.empty() ? "" : ",", code, v);
+    return std::format(R"({{"id":{},"remap":{},"keys":[{}],"buttons":{{{}}},"axes":{{{}}}}})",
+                       common::json::quote(s.padId), common::json::boolean(s.padRemapped), keys, buttons, axes);
 }
 
 void App::requestEstop(const char* reason) {

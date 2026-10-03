@@ -19,7 +19,7 @@ namespace krbot::driver { class DriverRegistry; }
 namespace krbot::knowledge { class FactStore; }
 namespace krbot::percep { class PerceptionLoop; }
 namespace krbot::reason { class ReasoningLoop; }
-namespace krbot::exec { class ManualDrive; class Watchdog; class GoalArbiter; }
+namespace krbot::exec { class ManualDrive; class Watchdog; class GoalArbiter; struct ManualDriveStatus; }
 
 namespace krbot::core {
 
@@ -35,6 +35,7 @@ public:
     void requestEstop(const char* reason);
     void logStatus() const;
     std::string snapshotJson() const;  // status members for the monitor protocol (thread-safe)
+    static std::string padJson(const exec::ManualDriveStatus& s);  // the "pad" member of snapshotJson
 
 private:
     void arbiterLoop();

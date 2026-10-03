@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <dirent.h>
 #include <fcntl.h>
+#include <format>
 #include <linux/input.h>
 #include <poll.h>
 #include <sys/ioctl.h>
@@ -20,6 +21,18 @@ namespace {
 constexpr int kTriggerAxes[] = {ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE};
 
 bool testBit(const uint8_t* bits, int n) { return bits[n / 8] & (1u << (n % 8)); }
+
+// Xbox One S pad (and SN2403 in its "Xbox Wireless Controller" mode) over Classic BT with firmware
+// 0x0903 and no xpadneo: hid-generic numbers HID buttons 1..10 straight onto 0x130..0x139 and the
+// Xbox button arrives as KEY_MENU. Measured on the BeagleY-AI 2026-10-03. Without this, BACK reads
+// as BTN_TL (the deadman) and START never fires. Mirrors BUTTON_REMAPS in krc/joystick.py.
+std::map<int, int> buttonRemapFor(const input_id& id) {
+    if (id.bustype == BUS_BLUETOOTH && id.vendor == 0x045e && id.product == 0x02e0)
+        return {{0x132, BTN_WEST},   {0x133, BTN_NORTH},  {0x134, BTN_TL},
+                {0x135, BTN_TR},     {0x136, BTN_SELECT}, {0x137, BTN_START},
+                {0x138, BTN_THUMBL}, {0x139, BTN_THUMBR}, {KEY_MENU, BTN_MODE}};
+    return {};
+}
 }  // namespace
 
 bool AxisInfo::oneSided() const {
@@ -111,7 +124,18 @@ bool InputDriver::open(const std::string& path) {
     path_ = p;
     name_ = name;
     bus_ = id.bustype;
-    KLOG_INFO(kTag, "gamepad: {} ({}) bus={:#x} id={:04x}:{:04x}", name_, path_, id.bustype, id.vendor, id.product);
+    id_ = std::format("{:04x}:{:04x}", id.vendor, id.product);
+    buttonRemap_ = buttonRemapFor(id);
+    uint8_t keyBits[(KEY_MAX + 8) / 8] = {};
+    ::ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keyBits), keyBits);
+    keys_.clear();
+    for (int code = 0; code <= KEY_MAX; ++code) {
+        if (!testBit(keyBits, code)) continue;
+        const auto it = buttonRemap_.find(code);
+        keys_.insert(it == buttonRemap_.end() ? code : it->second);
+    }
+    KLOG_INFO(kTag, "gamepad: {} ({}) bus={:#x} id={:04x}:{:04x}{}", name_, path_, id.bustype, id.vendor, id.product,
+              buttonRemap_.empty() ? "" : " (button remap: Xbox BT fw 0903)");
     return true;
 }
 
@@ -141,7 +165,11 @@ InputDriver::PollResult InputDriver::poll(int timeoutMs) {
             if (const auto it = axisInfo_.find(e.code); it != axisInfo_.end())
                 state_.axes[e.code] = it->second.normalise(e.value);
         } else if (e.type == EV_KEY) {
-            state_.buttons[e.code] = e.value != 0;
+            const auto it = buttonRemap_.find(e.code);
+            const int code = it == buttonRemap_.end() ? e.code : it->second;
+            bool& down = state_.buttons[code];
+            if (e.value != 0 && !down) ++state_.presses[code];
+            down = e.value != 0;
         }
     }
     return PollResult::Updated;
