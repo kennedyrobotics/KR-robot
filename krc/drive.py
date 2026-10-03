@@ -3,7 +3,9 @@
 Safety model (design note §6.1/§6.2):
   * DISARMED at start-up and after any link loss. Motors held at zero.
   * ARM:     press START while the deadman (LB) is *released* and sticks are centred.
-  * DRIVE:   motion only while the deadman (LB) is held. Release -> immediate zero.
+  * DRIVE:   motion only while the deadman (LB) is held. Release -> zero once LB has read
+             released for deadman_release_ms (debounces the SN2403's single all-buttons-up
+             reports over BT, notes/bluetooth-debugging.md §8), then immediate zero.
   * E-STOP:  B (or HOME) latches ESTOP from any state. Stopping is easy; re-arming is
              deliberate: release everything, then press START.
   * LINK LOSS (gamepad ENODEV / read error, motor serial error): -> DISARMED, zero output.
@@ -49,6 +51,7 @@ class TeleopConfig:
     expo: float = 0.3
     turn_scale: float = 0.6        # pivot turns load the drivers hard (§3.1) — limit them
     slew_per_s: float = 3.0        # max change in normalised output per second
+    deadman_release_ms: int = 40   # LB must read released this long before it counts (0 = immediate)
     tank: bool = False
     invert_left: bool = False
     invert_right: bool = True      # mirrored motor mounting is typical; confirm on the bench
@@ -76,6 +79,20 @@ class TeleopController:
         self._left = 0.0
         self._right = 0.0
         self._prev_arm = False
+        self._deadman_latched = False   # debounced LB state
+        self._deadman_off_s = 0.0       # how long LB has read released while latched
+
+    def _deadman_held(self, i: Inputs, dt: float) -> bool:
+        """Presses count at once; a release only after deadman_release_ms. Link loss bypasses this."""
+        if not i.link_ok:
+            self._deadman_latched = False
+        elif i.deadman:
+            self._deadman_latched, self._deadman_off_s = True, 0.0
+        elif self._deadman_latched:
+            self._deadman_off_s += dt
+            if self._deadman_off_s + 1e-4 >= self.cfg.deadman_release_ms / 1000.0:
+                self._deadman_latched = False
+        return self._deadman_latched
 
     def force_estop(self, reason: str) -> None:
         """Latch ESTOP from outside the gamepad (GUI button, motor link loss). Re-arm with START."""
@@ -90,6 +107,7 @@ class TeleopController:
         """Advance one control tick. Returns (left_pwm, right_pwm) after inversion."""
         arm_edge = i.arm and not self._prev_arm
         self._prev_arm = i.arm
+        deadman = self._deadman_held(i, dt)
 
         if not i.link_ok:
             # ESTOP is stricter than DISARMED, so it stays latched through link loss
@@ -98,13 +116,13 @@ class TeleopController:
         elif i.estop:
             self.mode, self.reason = Mode.ESTOP, "e-stop pressed"
         elif arm_edge and self.mode != Mode.ARMED:
-            if i.deadman or not self._sticks_centred(i):
+            if deadman or not self._sticks_centred(i):
                 self.reason = "arm refused: release LB and centre sticks"
             else:
                 self.mode, self.reason = Mode.ARMED, "armed"
 
         target_l = target_r = 0.0
-        if self.mode == Mode.ARMED and i.deadman:
+        if self.mode == Mode.ARMED and deadman:
             c = self.cfg
             if c.tank:
                 target_l = expo(deadband(-i.ly, c.stick_deadband), c.expo)

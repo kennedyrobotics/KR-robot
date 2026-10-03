@@ -3,7 +3,9 @@
 // (same unit tests). L5's direct manual path (doc v3 §6).
 //
 //  DISARMED at start-up and after link loss. ARM: START with deadman released + sticks centred.
-//  DRIVE only while deadman (LB) held; release -> instant zero. ESTOP (B/HOME, GUI, watchdog,
+//  DRIVE only while deadman (LB) held; release -> zero once it has read released for
+//  deadmanReleaseMs (debounce: the SN2403 over BT sends single all-buttons-up reports while LB is
+//  held, notes/bluetooth-debugging.md §8), then instant zero. ESTOP (B/HOME, GUI, watchdog,
 //  motor fault) latches, survives link loss, and is cleared only by re-arming with START.
 
 #include <array>
@@ -24,6 +26,7 @@ struct TeleopConfig {
     float expo = 0.3f;
     float turnScale = 0.6f;        // pivot turns load the AT8236 drivers hard
     float slewPerS = 3.0f;
+    int deadmanReleaseMs = 40;     // LB must read released this long before it counts (0 = immediate)
     bool tank = false;
     bool invertLeft = false;
     bool invertRight = true;
@@ -58,8 +61,11 @@ public:
 
 private:
     bool sticksCentred(const TeleopInputs& in) const;
+    bool deadmanHeld(const TeleopInputs& in, float dt);
 
     TeleopConfig cfg_;
+    bool deadmanLatched_ = false;   // debounced LB state
+    float deadmanOffS_ = 0;         // how long LB has read released while latched
     TeleopMode mode_ = TeleopMode::Disarmed;
     std::string reason_ = "start-up";
     float left_ = 0, right_ = 0;

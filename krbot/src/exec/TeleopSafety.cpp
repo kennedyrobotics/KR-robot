@@ -33,6 +33,21 @@ bool TeleopController::sticksCentred(const TeleopInputs& in) const {
     return std::fabs(in.lx) <= b && std::fabs(in.ly) <= b && std::fabs(in.rx) <= b && std::fabs(in.ry) <= b;
 }
 
+bool TeleopController::deadmanHeld(const TeleopInputs& in, float dt) {
+    // Presses count at once; a release only after it has lasted deadmanReleaseMs, so a single
+    // all-buttons-up report from the pad can't stop the robot. Link loss bypasses this.
+    if (!in.linkOk) {
+        deadmanLatched_ = false;
+    } else if (in.deadman) {
+        deadmanLatched_ = true;
+        deadmanOffS_ = 0;
+    } else if (deadmanLatched_) {
+        deadmanOffS_ += dt;
+        if (deadmanOffS_ + 1e-4f >= static_cast<float>(cfg_.deadmanReleaseMs) / 1000.0f) deadmanLatched_ = false;
+    }
+    return deadmanLatched_;
+}
+
 void TeleopController::forceEstop(std::string reason) {
     mode_ = TeleopMode::Estop;
     reason_ = std::move(reason);
@@ -42,6 +57,7 @@ void TeleopController::forceEstop(std::string reason) {
 TeleopOutput TeleopController::update(const TeleopInputs& in, float dt) {
     const bool armEdge = in.arm && !prevArm_;
     prevArm_ = in.arm;
+    const bool deadman = deadmanHeld(in, dt);
 
     if (!in.linkOk) {
         // ESTOP is stricter than DISARMED, so it stays latched through link loss
@@ -53,7 +69,7 @@ TeleopOutput TeleopController::update(const TeleopInputs& in, float dt) {
         mode_ = TeleopMode::Estop;
         reason_ = "e-stop pressed";
     } else if (armEdge && mode_ != TeleopMode::Armed) {
-        if (in.deadman || !sticksCentred(in)) {
+        if (deadman || !sticksCentred(in)) {
             reason_ = "arm refused: release LB and centre sticks";
         } else {
             mode_ = TeleopMode::Armed;
@@ -62,7 +78,7 @@ TeleopOutput TeleopController::update(const TeleopInputs& in, float dt) {
     }
 
     float tl = 0, tr = 0;
-    if (mode_ == TeleopMode::Armed && in.deadman) {
+    if (mode_ == TeleopMode::Armed && deadman) {
         const auto& c = cfg_;
         if (c.tank) {
             tl = expo(deadband(-in.ly, c.stickDeadband), c.expo);

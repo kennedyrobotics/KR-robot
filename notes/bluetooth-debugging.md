@@ -22,6 +22,7 @@ Findings from bringing up the SN2403 gamepad on the BeagleY-AI, on 2026-10-01. T
 | Onboard radio capability | **BLE only.** No Classic (BR/EDR). The SN2403 pairs over it only if its "Xbox Wireless Controller" emulation uses BLE |
 | Pad over BLE | **Not possible.** The pad's "Xbox Wireless Controller" mode is Classic BT HID (`045e:02e0`, firmware 0903) |
 | Pad over Classic BT (2026-10-03) | **Works** via a CSR8510 A10 USB dongle (`0a12:0001`, `btusb`, `hci0` now that onboard BLE is off). Paired, trusted and connected as `/dev/input/event5`. `scripts/bt-pair-gamepad.sh` now picks the BR/EDR-capable adapter |
+| Teleop jitter over BT (2026-10-03) | **Not the radio link.** BT reports arrive every ~2.3 ms with no gaps over 8.8 ms while moving, and krbot holds 50 Hz. **Cause:** the pad sends ~18 single reports per second with every button cleared while LB is held; when a 50 Hz tick reads one, the deadman reads released and the motors stop, then ramp back up (§8) |
 | Button layout over BT | **Non-standard; remapped in software.** hid-generic puts HID buttons 1–10 on 0x130–0x139 and the Xbox button on KEY_MENU (0x08b). `BUTTON_REMAPS` in `krc/joystick.py` and `buttonRemapFor()` in `krbot/src/exec/InputDriver.cpp` translate to standard codes for this pad only. Measured: A–RB, LS/RS, LT/RT. Confirmed on the robot 2026-10-03 with the tracks off the ground: HOME e-stops, LB is the deadman, START arms, sticks drive the tracks as expected. BACK (unused by teleop) not confirmed; in raw captures one small button sent no event at all |
 
 ---
@@ -183,7 +184,11 @@ ssh -t beagle@192.168.1.116 ~/krc-robot/tools/joystick-controller-debug.py   # l
 - [x] Confirm `krc-ble-enable.service` brings `hci0` up after a **full reboot** (verified 2026-10-02; service since disabled, §7)
 - [x] Fallback chosen and tested: CSR8510 Classic USB dongle, pad in its Xbox mode (2026-10-03)
 - [x] Pad reconnects by itself after a full power loss and after a clean reboot (2026-10-03)
-- [ ] Check the BT link's range and latency against the 50 Hz teleop loop
+- [x] Check the BT link's latency against the 50 Hz teleop loop: clean, max 8.8 ms gap while moving (§8, 2026-10-03)
+- [x] Debounce deadman release so single-report button drop-outs don't stop the motors (§8, `deadman_release_ms = 40`)
+- [ ] Re-run `tools/bt_link_probe.py` while driving and confirm zero output collapses with the stick steady
+- [ ] Check whether the button drop-outs also happen wired (xpad) and in the pad's other modes (§8)
+- [ ] BT range test (walk away / body in the way) once the drop-out fix is in
 - [ ] Report the `btti_uart` oops (§7) upstream to BeagleBoard / TI, or retest on a newer kernel before re-enabling onboard BLE
 
 ## 7. Boot hang: onboard BLE + USB dongle at boot (2026-10-03)
@@ -218,3 +223,71 @@ The oops is in `btti_uart`, the driver for the **onboard** CC3301's BLE, not in 
 The pad needs Classic BT, which only the dongle provides, so the onboard BLE isn't needed. `krc-ble-enable.service` is **disabled** (`sudo systemctl disable krc-ble-enable`). debugfs `ble_enable` resets to 0 on every boot, so `btti` never registers an adapter and the crashing path never runs. `scripts/sudo-setup.sh --bluetooth` no longer installs it and disables it if found. The dongle is now `hci0`.
 
 Don't re-enable onboard BLE while the dongle is fitted unless the oops has been fixed upstream.
+
+## 8. Teleop jitter over Bluetooth (2026-10-03)
+
+### Symptom (jitter)
+
+Driving over BT, the tracks surge and stutter: "intermittent Bluetooth and drive commands". The question was whether pad reports are arriving late or being missed.
+
+### Method
+
+[`tools/bt_link_probe.py`](../tools/bt_link_probe.py) (run with sudo, read-only) records three things side by side for 120 s while driving:
+
+- every HID input report from the pad, read from `/dev/hidraw0` alongside krbot's evdev grab, timestamped
+- krbot's monitor feed at 10 Hz: loop rate, mode changes, inputs, output, pad drops, watchdog trips
+- radio once a second: BT RSSI and link quality (`hcitool`), Wi-Fi level
+
+```bash
+sudo python3 ~/krc-robot/tools/bt_link_probe.py --seconds 120   # raw data -> /tmp/bt-probe-*.json
+```
+
+Run 2026-10-03 17:10, ~103 s of driving with LB held, pad within a few metres of the robot.
+
+### Results (jitter)
+
+| Layer | Measured | Verdict |
+|---|---|---|
+| **BT link** | 58,185 reports in 120 s (**~485/s**). Gaps while the sticks were moving: p50 2.3 ms, p99 5.0 ms, **max 8.8 ms**, none over 25 ms. No link loss. Link quality 239–255 / 255, RSSI −16…0 (golden range). Wi-Fi −27 dBm on channel 6 alongside it | **Clean.** Nothing late, nothing missed |
+| **Stick data** | Resolution 1/128 of half-travel. Held-steady noise: p2p median **0.000**, max 0.047, inside the 0.08 deadband. Values update every ~2.7 ms (p50) | **Clean** |
+| **krbot** | Loop **50.0 Hz** throughout. No mode changes, no pad drops, no watchdog trips | **Clean** |
+| **Buttons** | While LB was held, **1,875 single reports with every button cleared** (`00 00 00` in bytes 13–15), then straight back to LB held. **18.2 per second**, each lasting one report: p50 2.3 ms, max 8.8 ms. Spacing p10 14 ms, p50 32 ms, p90 96 ms. Sticks in those reports are normal | **This is the cause** |
+| **Output** | In 82 of the 10 Hz snapshots, the left output fell by more than half (from ≥900) while the stick was steady. The 10 Hz snapshot misses most of them | Symptom |
+
+Example: stick held at full reverse (`ly +1.00`), LB held throughout, target −1800 / +1800:
+
+```text
+  t (s)   ly     out L / R
+  112.4  +1.00   -540  +540
+  112.5  +1.00  -1080 +1080
+  112.6  +1.00   -324  +324     <- collapsed to 0 on one tick, ramping back at 540 / 100 ms
+  112.7  +1.00   -864  +864
+  112.8  +1.00  -1404 +1404
+  112.9  +1.00  -1800 +1800
+  ...
+  113.7  +1.00  -1800 +1800
+  113.8  +1.00   -108  +108     <- again
+```
+
+### Mechanism
+
+1. The pad (SN2403 in "Xbox Wireless Controller" mode, firmware 0903) interleaves occasional reports with **all buttons released**. This is in the HID data from the pad, not a radio fault: the reports are well-formed, arrive on time, and carry normal stick values.
+2. evdev turns each one into `BTN_TL 0` then, one report later, `BTN_TL 1`.
+3. krbot drains evdev once per 20 ms tick. If a tick reads between the release and the re-press (~2.4 ms out of every 20 ms, so about 1 in 8 drop-outs), `deadman` is false for that tick.
+4. `TeleopController::update()` treats deadman released as stop: target 0, and **stopping is never rate-limited**, so the output drops to 0 at once. On the next tick deadman is back, and the slew limit (`slew_per_s = 3.0`, 540 PWM per 100 ms at `max_output = 1800`) ramps it back up over up to ~0.33 s.
+
+The result is a stop–ramp cycle roughly once or twice a second while driving, which reads as jitter or missed commands.
+
+Only button *releases* are faked, never presses. So the risk is spurious stops (and a spurious START edge if START were held), not unintended motion.
+
+### Fix (implemented 2026-10-03)
+
+- **Deadman release debounce** in `TeleopController` (C++ `krbot/src/exec/TeleopSafety.cpp` and Python `krc/drive.py`, kept identical): LB counts as released only after it has read released for `teleop.deadman_release_ms` (default **40 ms**, 2 control ticks; `0` restores the old instant behaviour). The longest drop-out seen was 8.8 ms. Pressing takes effect at once. E-STOP (B / HOME) and link loss are not debounced. Arming uses the debounced state, so a drop-out can't let it arm while LB is actually held.
+- Unit tests (C++ and Python): a one-tick drop-out every other tick never stops the output; a real release stops on the 2nd tick; `0` is immediate; link loss stops at once; arming is refused during a drop-out.
+- Safety trade-off: letting go of LB stops the robot up to ~40 ms later than now, well inside human reaction time and the 200 ms watchdog. Link loss still stops at once.
+- Verify by re-running `bt_link_probe.py`: expect zero output collapses with the stick steady.
+
+### Still unknown (jitter)
+
+- Whether the drop-outs also happen wired (`xpad`) or in the pad's PS4 / Switch modes.
+- Whether they come from the SN2403 firmware itself (a clone of the Xbox One S BT protocol) or from the pairing / host side. They look like a firmware trait: every one blanks all buttons and leaves the sticks untouched.

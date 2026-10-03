@@ -36,6 +36,7 @@ protected:
     TeleopController ctl{cfg};
 
     void arm() {
+        run(ctl, in(), 3);  // release everything first (deadman release is debounced 40 ms)
         ctl.update(in(0, false, true), kDt);
         ctl.update(in(), kDt);
         ASSERT_EQ(ctl.mode(), TeleopMode::Armed);
@@ -76,9 +77,44 @@ TEST_F(Safety, DriveNeedsDeadman) {
     const auto o = run(ctl, in(-1, true));
     EXPECT_EQ(o.left, 1000);
     EXPECT_EQ(o.right, 1000);
-    const auto r = ctl.update(in(-1), kDt);  // release deadman: instant stop
+    // release deadman: stops once it has read released for deadmanReleaseMs (40 ms = 2 ticks)
+    EXPECT_EQ(ctl.update(in(-1), kDt).left, 1000);
+    const auto r = ctl.update(in(-1), kDt);
     EXPECT_EQ(r.left, 0);
     EXPECT_EQ(r.right, 0);
+}
+
+TEST_F(Safety, DeadmanDropoutDoesNotStop) {
+    // SN2403 over BT: single all-buttons-up reports while LB is held (notes/bluetooth-debugging.md §8)
+    arm();
+    run(ctl, in(-1, true));
+    for (int k = 0; k < 20; ++k) {
+        EXPECT_EQ(ctl.update(in(-1, false), kDt).left, 1000) << "one-tick drop-out " << k;
+        EXPECT_EQ(ctl.update(in(-1, true), kDt).left, 1000);
+    }
+}
+
+TEST_F(Safety, DeadmanReleaseZeroIsImmediate) {
+    cfg.deadmanReleaseMs = 0;
+    TeleopController c{cfg};
+    c.update(in(0, false, true), kDt);
+    c.update(in(), kDt);
+    run(c, in(-1, true));
+    EXPECT_EQ(c.update(in(-1), kDt).left, 0);
+}
+
+TEST_F(Safety, LinkLossStopsWithoutDebounce) {
+    arm();
+    run(ctl, in(-1, true));
+    EXPECT_EQ(ctl.update(in(-1, true, false, false, false), kDt).left, 0);
+    EXPECT_EQ(ctl.mode(), TeleopMode::Disarmed);
+}
+
+TEST_F(Safety, ArmRefusedDuringDeadmanDropout) {
+    // LB held (latched) -> one drop-out tick coinciding with START must not let it arm
+    ctl.update(in(0, true), kDt);
+    ctl.update(in(0, false, true), kDt);
+    EXPECT_EQ(ctl.mode(), TeleopMode::Disarmed);
 }
 
 TEST_F(Safety, SlewLimitsRampUp) {

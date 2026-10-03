@@ -100,6 +100,7 @@ class TestSafety(unittest.TestCase):
         self.ctl = TeleopController(self.cfg)
 
     def arm(self):
+        run(self.ctl, Inputs(), n=3)   # release everything first (deadman release is debounced 40 ms)
         self.ctl.update(Inputs(arm=True), DT)
         self.ctl.update(Inputs(), DT)
         self.assertEqual(self.ctl.mode, Mode.ARMED)
@@ -119,8 +120,35 @@ class TestSafety(unittest.TestCase):
         self.arm()
         self.assertEqual(run(self.ctl, Inputs(ly=-1.0)), (0, 0))
         self.assertEqual(run(self.ctl, Inputs(ly=-1.0, deadman=True)), (1000, 1000))
-        # releasing the deadman stops instantly (no slew on the way down)
+        # releasing the deadman stops once it has read released for 40 ms (2 ticks), with no
+        # slew on the way down
+        self.assertEqual(self.ctl.update(Inputs(ly=-1.0), DT), (1000, 1000))
         self.assertEqual(self.ctl.update(Inputs(ly=-1.0), DT), (0, 0))
+
+    def test_deadman_dropout_does_not_stop(self):
+        # SN2403 over BT: single all-buttons-up reports while LB is held (notes/bluetooth-debugging.md §8)
+        self.arm()
+        run(self.ctl, Inputs(ly=-1.0, deadman=True))
+        for _ in range(20):
+            self.assertEqual(self.ctl.update(Inputs(ly=-1.0), DT), (1000, 1000))
+            self.assertEqual(self.ctl.update(Inputs(ly=-1.0, deadman=True), DT), (1000, 1000))
+
+    def test_deadman_release_zero_is_immediate(self):
+        ctl = TeleopController(TeleopConfig(max_pwm=1000, invert_right=False, expo=0.0, deadman_release_ms=0))
+        ctl.update(Inputs(arm=True), DT)
+        ctl.update(Inputs(), DT)
+        run(ctl, Inputs(ly=-1.0, deadman=True))
+        self.assertEqual(ctl.update(Inputs(ly=-1.0), DT), (0, 0))
+
+    def test_link_loss_stops_without_debounce(self):
+        self.arm()
+        run(self.ctl, Inputs(ly=-1.0, deadman=True))
+        self.assertEqual(self.ctl.update(Inputs(ly=-1.0, deadman=True, link_ok=False), DT), (0, 0))
+
+    def test_arm_refused_during_deadman_dropout(self):
+        self.ctl.update(Inputs(deadman=True), DT)
+        self.ctl.update(Inputs(arm=True), DT)
+        self.assertEqual(self.ctl.mode, Mode.DISARMED)
 
     def test_slew_limits_ramp_up(self):
         self.arm()

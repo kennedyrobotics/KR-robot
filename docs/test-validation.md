@@ -244,7 +244,7 @@ The safety unit tests that back the Phase F demonstrations are:
 | TC-F-01 | Hold LB, then press START | Arm refused ("release LB and centre sticks") | SAF-02 | D | OPEN | |
 | TC-F-02 | Sticks centred, LB released, then START | ARMED | SAF-02 | D | **PASS** 2026-10-02 | log `armed` |
 | TC-F-03 | ARMED, stick forward, LB **not** held | No output | SAF-03 | D | OPEN | |
-| TC-F-04 | Hold LB plus the stick, then release LB | Output goes to 0 immediately | SAF-03 | D | OPEN | |
+| TC-F-04 | Hold LB plus the stick, then release LB | Output goes to 0 within 40 ms (deadman release debounce, 2 ticks); a one-report LB drop-out does not stop it | SAF-03 | D | OPEN | |
 | TC-F-05 | Stick forward, LB held | **Both tracks forward** | FUN-03 | D | OPEN, **direction not yet confirmed** | |
 | TC-F-06 | Right stick right | Robot **turns right** (left track forward, right track back) | FUN-03 | D | OPEN | |
 | TC-F-07 | Full stick | Output capped at ±1800 (`max_output`) | SAF-10 | T | **PASS** 2026-10-02 | log L/R ±1800 |
