@@ -34,7 +34,9 @@ double lipoPercent(double cellV) {
 }
 
 BatteryState BatteryMonitor::update(std::optional<double> volts, double ageS) {
-    if (!volts || ageS < 0 || ageS > cfg_.staleS) {
+    const bool fresh = volts && ageS >= 0 && ageS <= cfg_.staleS;
+    if (fresh && *volts < cfg_.minValidV) return state_;  // implausible reading (power-up 0.0 V): ignore it
+    if (!fresh) {
         state_ = BatteryState::Unknown;
         armBlocked_ = false;
         return state_;

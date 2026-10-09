@@ -87,9 +87,11 @@ void ManualDrive::publishFact(const std::string& subject, const std::string& pre
 void ManualDrive::updateBoard(TeleopInputs& in) {
     const auto b = motors_.boardStatus();
     if (b.supported) {
-        const bool silent = b.replyAgeS < 0 ? false : b.replyAgeS > opts_.boardSilentS;
+        // never replied counts too, once the board has had boardSilentS since start-up to answer
+        const double sinceStart = std::chrono::duration<double>(Clock::now() - startedAt_).count();
+        const bool silent = b.replyAgeS < 0 ? sinceStart > opts_.boardSilentS : b.replyAgeS > opts_.boardSilentS;
         if (silent != boardSilent_) {
-            if (silent) KLOG_WARN(kTag, "motor board not replying for {:.0f} s (powered off?)", b.replyAgeS);
+            if (silent) KLOG_WARN(kTag, "motor board not replying for {:.0f} s (powered off?)", b.replyAgeS < 0 ? sinceStart : b.replyAgeS);
             else KLOG_INFO(kTag, "motor board replying again");
             publishFact("motorBoard", "replying", silent ? "false" : "true");
             boardSilent_ = silent;

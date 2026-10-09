@@ -64,7 +64,7 @@ class MonitorApp(tk.Tk):
         self.status: dict = {}
         self.status_t = 0.0
         self.title(f"KR-bot Monitor — {client.host}:{client.port}")
-        self.geometry("1180x800")
+        self.geometry("1320x820")
         self.minsize(980, 660)
         self.configure(bg=BG)
         icon = APP_DIR / "images" / "krbot_console.png"
@@ -218,7 +218,7 @@ class MonitorApp(tk.Tk):
         btn("X", 390, 135, 15)
         btn("B", 450, 135, 15)
         btn("A", 420, 165, 15)
-        btn("BACK", 235, 125, 12, "⧉")
+        btn("BACK", 235, 125, 12, "◧")
         btn("HOME", 280, 95, 16, "⌂")
         btn("START", 325, 125, 12, "≡")
         self._pad_axes_lbl = tk.Label(pic, text="", bg=PANEL, fg=TEXT, font=(MONO, 9), justify=tk.LEFT, anchor="w")
@@ -555,10 +555,10 @@ class MonitorApp(tk.Tk):
         self._c_bat["per cell"].configure(
             text=f"{bat['cell_v']:.2f} V x {bat.get('cells', '?')}S" if bat.get("cell_v") is not None else "—", fg=colour)
         self._c_bat["charge"].configure(
-            text=f"~{bat['pct']:.0f} %  (resting estimate)" if bat.get("pct") is not None else "—", fg=colour)
+            text=f"~{bat['pct']:.0f} %  (at rest)" if bat.get("pct") is not None else "—", fg=colour)
         self._c_bat["arming"].configure(
-            text=(f"BLOCKED: below {bat.get('low_v', 0):.1f} V" if bat.get("arm_blocked") else
-                  f"allowed (warn {bat.get('warn_v', 0):.1f} / low {bat.get('low_v', 0):.1f} V)") if bat else "—",
+            text=(f"BLOCKED (< {bat.get('block_v', 0):.1f} V)" if bat.get("arm_blocked") else
+                  (f"allowed (≥ {bat['block_v']:.1f} V)" if bat.get("block_v", 0) > 0 else "never blocked")) if bat else "—",
             fg=BAD if bat.get("arm_blocked") else TEXT)
         wd = s.get("watchdog", {})
         self._c_mot["watchdog"].configure(text=f"{wd.get('trips', '-')} trips / {wd.get('timeout_ms', '-')} ms",

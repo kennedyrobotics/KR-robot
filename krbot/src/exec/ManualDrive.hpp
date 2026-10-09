@@ -102,6 +102,7 @@ private:
     bool motorFaultLatched_ = false;
     BatteryMonitor battery_;    // control thread only
     bool boardSilent_ = false;  // control thread only
+    std::chrono::steady_clock::time_point startedAt_ = std::chrono::steady_clock::now();
     void updateBoard(TeleopInputs& in);
 };
 

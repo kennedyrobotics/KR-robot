@@ -17,6 +17,8 @@ struct BatteryConfig {
     double lowV = 6.6;            // 3.3 V/cell: stop and charge
     double blockArmBelowV = 6.6;  // refuse ARM below this on a fresh reading (<= 0 disables)
     double staleS = 5.0;          // older readings count as Unknown and never block
+    double minValidV = 4.0;       // below this the reading is not real: the board needs 5 V to run, and
+                                  // it replies $Battery:0.0V for a moment after power-up (seen 2026-10-09)
     double hysteresisV = 0.1;     // one reading step: avoids flicker at a threshold
 };
 
