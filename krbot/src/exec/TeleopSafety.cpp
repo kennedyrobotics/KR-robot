@@ -71,6 +71,8 @@ TeleopOutput TeleopController::update(const TeleopInputs& in, float dt) {
     } else if (armEdge && mode_ != TeleopMode::Armed) {
         if (deadman || !sticksCentred(in)) {
             reason_ = "arm refused: release LB and centre sticks";
+        } else if (in.armBlocked) {
+            reason_ = "arm refused: battery low";
         } else {
             mode_ = TeleopMode::Armed;
             reason_ = "armed";

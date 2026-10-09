@@ -4,8 +4,19 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace krbot::driver {
+
+// What the motor board reports about itself, beyond accepting commands. Yahboom: battery voltage via
+// $read_vol#, and any reply at all proves the board is powered and talking. No current/temperature.
+struct BoardStatus {
+    bool supported = false;              // false: controller can't report (sim, unknown board)
+    std::optional<double> batteryV;      // last battery reading, volts
+    double batteryAgeS = -1;             // seconds since that reading (-1 = never)
+    double replyAgeS = -1;               // seconds since the board last sent anything (-1 = never)
+    uint64_t replies = 0;                // frames received from the board
+};
 
 class IMotorController {
 public:
@@ -22,6 +33,8 @@ public:
 
     virtual void stopAll() = 0;
     virtual bool isHealthy() const = 0;
+    // Extension to doc v3: board self-report (battery, liveness). Default: not supported.
+    virtual BoardStatus boardStatus() const { return {}; }
     virtual ~IMotorController() = default;
 };
 

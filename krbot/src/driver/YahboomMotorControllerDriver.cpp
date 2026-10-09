@@ -105,7 +105,18 @@ void YahboomMotorControllerDriver::writeFrame(const std::string& frame) {
 void YahboomMotorControllerDriver::rxLoop() {
     yahboom::FrameParser parser;
     char buf[256];
+    const auto pollEvery = std::chrono::milliseconds(opts_.batteryPollMs);
+    auto nextPoll = std::chrono::steady_clock::now() + 500ms;  // let configure() finish first
     while (running_) {
+        // Battery query from this thread: the reply doubles as the board's liveness heartbeat.
+        if (opts_.batteryPollMs > 0 && std::chrono::steady_clock::now() >= nextPoll) {
+            nextPoll += pollEvery;
+            try {
+                writeFrame("$read_vol#");
+            } catch (const std::exception&) {
+                // writeFrame already marked the driver unhealthy; the control loop reports it
+            }
+        }
         std::size_t n = 0;
         try {
             n = port_.read(buf, sizeof buf, 50ms);
@@ -120,7 +131,12 @@ void YahboomMotorControllerDriver::rxLoop() {
         for (auto& f : parser.feed(std::string_view(buf, n))) {
             KLOG_DEBUG(kTag, "RX ${}#", f);
             std::lock_guard lock(rxMutex_);
-            if (!yahboom::parseReport(f, telem_)) {
+            const auto now = std::chrono::steady_clock::now();
+            lastRx_ = now;
+            ++replies_;
+            if (f.rfind("Battery:", 0) == 0 && yahboom::parseReport(f, telem_)) {
+                batteryAt_ = now;
+            } else if (!yahboom::parseReport(f, telem_)) {
                 other_.push_back(std::move(f));
                 if (other_.size() > 50) other_.erase(other_.begin());
             }
@@ -131,6 +147,19 @@ void YahboomMotorControllerDriver::rxLoop() {
 yahboom::Telemetry YahboomMotorControllerDriver::telemetry() const {
     std::lock_guard lock(rxMutex_);
     return telem_;
+}
+
+BoardStatus YahboomMotorControllerDriver::boardStatus() const {
+    std::lock_guard lock(rxMutex_);
+    const auto now = std::chrono::steady_clock::now();
+    const auto age = [&](auto t) { return t == decltype(t){} ? -1.0 : std::chrono::duration<double>(now - t).count(); };
+    BoardStatus s;
+    s.supported = opts_.batteryPollMs > 0;
+    s.batteryV = telem_.batteryV;
+    s.batteryAgeS = age(batteryAt_);
+    s.replyAgeS = age(lastRx_);
+    s.replies = replies_;
+    return s;
 }
 
 std::vector<std::string> YahboomMotorControllerDriver::unrecognisedFrames() const {

@@ -36,6 +36,8 @@ public:
     void logStatus() const;
     std::string snapshotJson() const;  // status members for the monitor protocol (thread-safe)
     static std::string padJson(const exec::ManualDriveStatus& s);  // the "pad" member of snapshotJson
+    std::string batteryJson(const exec::ManualDriveStatus& s) const;  // the "battery" member
+    std::string boardJson(const exec::ManualDriveStatus& s) const;    // the "board" member
 
 private:
     void arbiterLoop();

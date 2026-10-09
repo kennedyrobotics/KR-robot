@@ -232,7 +232,7 @@ flowchart LR
 
 | Tab | What it shows / does |
 |---|---|
-| **Overview** | Mode banner and deadman state. Cards for the server (uptime, version, dry-run), the gamepad and the motor board (watchdog trips). Live track PWM bars, and a **5-layer panel** (L5 loop and goal, L4 ticks and deltas, L3 fact count, L2 sources, L1 driver health) |
+| **Overview** | Mode banner and deadman state. Cards for the server (uptime, version, dry-run), the gamepad, the motor board (watchdog trips, and whether the board is replying) and the **battery** (voltage from the motor board, V/cell, rough %, arming allowed or blocked). Live track PWM bars with % of the ±3600 full scale, and a **5-layer panel** (L5 loop and goal, L4 ticks and deltas, L3 fact count, L2 sources, L1 driver health) |
 | **Inputs** | Both sticks, plus the deadman / arm / e-stop / link state exactly as `krbot`'s control loop received them |
 | **Controller** | Every button and axis on the pad, live, with a press-each-one maintenance checklist and stick drift readout. Shows the device id and whether the BT button remap is active |
 | **Events** | Live log with level colours, follow, save. The periodic status lines are hidden by default |

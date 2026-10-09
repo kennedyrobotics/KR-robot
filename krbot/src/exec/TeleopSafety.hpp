@@ -40,6 +40,7 @@ struct TeleopInputs {
     bool arm = false;                      // START
     bool estop = false;                    // B or HOME
     bool linkOk = true;
+    bool armBlocked = false;               // e.g. battery below battery.block_arm_below_v
 };
 
 struct TeleopOutput {

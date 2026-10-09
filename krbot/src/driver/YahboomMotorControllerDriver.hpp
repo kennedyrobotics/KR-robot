@@ -8,6 +8,7 @@
 #include "driver/YahboomProtocol.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -22,8 +23,9 @@ public:
     struct Options {
         std::string port = "/dev/ttyAMA0";          // header UART (wiring-manual §5.1b)
         std::string fallbackPort = "/dev/krc-motor";  // USB-C link
-        std::string pwmKeyword = "pwm";    // UNVERIFIED
-        std::string speedKeyword = "spd";  // UNVERIFIED (some sources: "speed")
+        std::string pwmKeyword = "pwm";    // confirmed (Yahboom control command doc)
+        std::string speedKeyword = "spd";  // confirmed (Yahboom control command doc)
+        int batteryPollMs = 1000;          // send $read_vol# this often from the RX thread (0 = never)
         int maxOutput = 1800;              // clamp, PWM counts (bench default ~50 %)
         Mode mode = Mode::Pwm;
     };
@@ -41,6 +43,7 @@ public:
     void setAllChannels(const Channels& speeds) override;
     void stopAll() override;
     bool isHealthy() const override;
+    BoardStatus boardStatus() const override;
 
     yahboom::Telemetry telemetry() const;
     std::vector<std::string> unrecognisedFrames() const;
@@ -59,6 +62,8 @@ private:
     Channels last_{};
     yahboom::Telemetry telem_;
     std::vector<std::string> other_;
+    std::chrono::steady_clock::time_point lastRx_{}, batteryAt_{};  // guarded by rxMutex_
+    uint64_t replies_ = 0;                                          // guarded by rxMutex_
     std::string lastError_;
     std::atomic<bool> running_{false};
     std::atomic<bool> healthy_{false};

@@ -54,7 +54,7 @@
   .bar .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--dim); }
   .row { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
   .row .lbl { width: 96px; color: var(--muted); flex: none; }
-  .row .val { width: 64px; text-align: right; font: 700 14px var(--mono); flex: none; }
+  .row .val { width: 112px; text-align: right; font: 700 14px var(--mono); flex: none; }
   .mono { font-family: var(--mono); font-size: 12px; }
   .note { color: var(--dim); font-style: italic; font-size: 12px; margin: 6px 0 0; }
   .sticks { display: flex; gap: 16px; flex-wrap: wrap; }
@@ -80,7 +80,7 @@
     header { flex-wrap: wrap; padding: 10px 16px; }
     #mode { min-width: 96px; font-size: 16px; } #estop { flex: 1 0 100%; padding: 10px; order: 3; }
     #reason { white-space: normal; }
-    th, td { padding: 3px 4px; } .row .lbl { width: 72px; } .row .val { width: 52px; }
+    th, td { padding: 3px 4px; } .row .lbl { width: 72px; } .row .val { width: 96px; font-size: 12px; }
   }
 </style>
 </head>
@@ -103,8 +103,9 @@
       <section><h2>krbot server</h2><dl id="c-srv"></dl></section>
       <section><h2>Gamepad (L5)</h2><dl id="c-pad"></dl></section>
       <section><h2>Motor board (L1)</h2><dl id="c-mot"></dl></section>
+      <section><h2>Battery (motor board)</h2><dl id="c-bat"></dl></section>
     </div>
-    <section><h2>Track output (PWM)</h2>
+    <section><h2>Track output (PWM counts, % of ±3600 full scale)</h2>
       <div class="row"><span class="lbl">Left (M1)</span><div class="bar"><div class="mid"></div><div class="fill" id="out-l"></div></div><span class="val" id="out-lv">0</span></div>
       <div class="row"><span class="lbl">Right (M2)</span><div class="bar"><div class="mid"></div><div class="fill" id="out-r"></div></div><span class="val" id="out-rv">0</span></div>
     </section>
@@ -192,7 +193,8 @@ document.addEventListener("keydown", (e) => {
 function dl(id, keys) { $(id).innerHTML = keys.map((k) => `<dt>${k}</dt><dd id="${id}-${k.replace(/\W/g, "")}">—</dd>`).join(""); }
 dl("c-srv", ["link", "endpoint", "version", "uptime", "motors mode"]);
 dl("c-pad", ["status", "device", "drops"]);
-dl("c-mot", ["status", "driver", "watchdog"]);
+dl("c-mot", ["status", "board", "driver", "watchdog"]);
+dl("c-bat", ["voltage", "per cell", "charge", "arming"]);
 dl("c-layer", ["L5", "L4", "L3", "L2", "L1"]);
 const setdd = (id, text, cls) => { const e = $(id); e.textContent = text; e.className = cls || ""; };
 
@@ -270,7 +272,8 @@ function render() {
   const live = connected && !!s.mode && !stale;
   $("mode").textContent = mode; $("mode").style.background = colour; $("reason").textContent = reason;
   const pad = s.gamepad || {}, mot = s.motors || {}, inp = s.inputs || {};
-  $("links").textContent = live ? `krbot: OK    gamepad: ${pad.connected ? "OK" : "none"}    motors: ${mot.healthy ? "OK" : "FAULT"}    loop: ${(s.loop_hz || 0).toFixed(0)} Hz    viewers: ${link.viewers ?? "-"}`
+  const bat = s.battery || {}, board = s.board || {};
+  $("links").textContent = live ? `krbot: OK    gamepad: ${pad.connected ? "OK" : "none"}    motors: ${mot.healthy ? "OK" : "FAULT"}    battery: ${bat.v != null ? bat.v.toFixed(1) + " V" : "-"}    loop: ${(s.loop_hz || 0).toFixed(0)} Hz    viewers: ${link.viewers ?? "-"}`
                                 : `krbot: ${link.connected ? "connected" : "DOWN"}`;
   const dm = $("deadman");
   if (live && mode === "ARMED" && inp.deadman) { dm.textContent = "●  DEADMAN HELD — ROBOT LIVE"; dm.style.background = css("--good"); }
@@ -288,13 +291,24 @@ function render() {
   setdd("c-pad-drops", String(pad.disconnects ?? "—"));
   setdd("c-mot-status", s.mode ? (mot.healthy ? "healthy" : "FAULT") : "—", mot.healthy ? "good" : "bad");
   setdd("c-mot-driver", mot.desc || "—");
+  setdd("c-mot-board", !s.mode || !s.board ? "—" : board.alive == null ? "n/a (no self-report)"
+        : board.alive ? `replying (${board.reply_age_s.toFixed(1)} s ago)`
+        : `NOT replying${board.reply_age_s != null ? ` for ${board.reply_age_s.toFixed(0)} s` : ""}`,
+        board.alive == null ? "" : board.alive ? "good" : "bad");
+  const bcls = {ok: "good", warn: "warn", low: "bad"}[bat.state] || "dimc";
+  setdd("c-bat-voltage", bat.v != null ? `${bat.v.toFixed(1)} V  (${bat.state})` : s.mode ? "no reading" : "—", bcls);
+  setdd("c-bat-percell", bat.cell_v != null ? `${bat.cell_v.toFixed(2)} V × ${bat.cells}S` : "—", bcls);
+  setdd("c-bat-charge", bat.pct != null ? `~${bat.pct.toFixed(0)} %  (resting estimate)` : "—", bcls);
+  setdd("c-bat-arming", !s.battery ? "—" : bat.arm_blocked ? `BLOCKED: below ${bat.low_v.toFixed(1)} V`
+        : `allowed (warn ${bat.warn_v.toFixed(1)} / low ${bat.low_v.toFixed(1)} V)`, bat.arm_blocked ? "bad" : "");
   const wd = s.watchdog || {};
   setdd("c-mot-watchdog", `${wd.trips ?? "-"} trips / ${wd.timeout_ms ?? "-"} ms`, wd.trips ? "bad" : "");
 
-  const out = s.out || {}, scale = Math.max(1, s.max_output || 1800);
+  const out = s.out || {}, scale = Math.max(1, s.max_output || 1800), full = Math.max(1, s.pwm_full_scale || 3600);
   for (const [k, id] of [["left", "out-l"], ["right", "out-r"]]) {
     const v = out[k] || 0; setBar(id, v / scale, v ? css("--good") : css("--dim"));
-    $(id + "v").textContent = (v >= 0 ? "+" : "") + v;
+    const pc = Math.round(100 * v / full);
+    $(id + "v").textContent = `${v >= 0 ? "+" : ""}${v}  ${pc >= 0 ? "+" : ""}${pc}%`;
   }
   const g = s.goal || {}, rs = s.reasoner || {};
   const goal = g.type ? `${g.type}(${g.target}) prio ${g.priority} ${g.task}` : "none";

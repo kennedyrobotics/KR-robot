@@ -4,6 +4,7 @@
 #include "common/Log.hpp"
 #include "core/MonitorServer.hpp"
 #include "driver/DriverRegistry.hpp"
+#include "driver/YahboomProtocol.hpp"
 #include "exec/GoalArbiter.hpp"
 #include "exec/ManualDrive.hpp"
 #include "exec/StubExecutor.hpp"
@@ -13,6 +14,10 @@
 #include "percep/PerceptionLoop.hpp"
 #include "reason/NullReasoner.hpp"
 #include "reason/ReasoningLoop.hpp"
+
+#include <algorithm>
+#include <format>
+#include <optional>
 
 namespace krbot::core {
 
@@ -86,6 +91,12 @@ void App::start() {
     t.rightChannel = static_cast<int>(cfg_.getInt("teleop.right_channel", t.rightChannel));
     mo.gamepadPath = cfg_.getString("input.device", "");
     mo.rateHz = static_cast<int>(cfg_.getInt("teleop.rate_hz", 50));
+    auto& bc = mo.battery;
+    bc.cells = static_cast<int>(cfg_.getInt("battery.cells", bc.cells));
+    bc.warnV = cfg_.getDouble("battery.warn_v", bc.warnV);
+    bc.lowV = cfg_.getDouble("battery.low_v", bc.lowV);
+    bc.blockArmBelowV = cfg_.getDouble("battery.block_arm_below_v", bc.blockArmBelowV);
+    bc.staleS = cfg_.getDouble("battery.stale_s", bc.staleS);
     manual_ = std::make_unique<exec::ManualDrive>(motors, facts_.get(), watchdog_.get(), mo);
 
     arbiter_ = std::make_unique<exec::GoalArbiter>(
@@ -193,7 +204,8 @@ std::string App::snapshotJson() const {
         R"("motors":{{"healthy":{},"desc":{}}},"loop_hz":{:.1f},)"
         R"("watchdog":{{"trips":{},"timeout_ms":{}}},"facts":{},)"
         R"("reasoner":{{"ticks":{},"saturated":{},"deltas":{}}},)"
-        R"("goal":{{"type":{},"target":{},"task":{},"priority":{},"pending":{}}},"monitor_clients":{},"pad":{})",
+        R"("goal":{{"type":{},"target":{},"task":{},"priority":{},"pending":{}}},"monitor_clients":{},"pad":{},)"
+        R"("pwm_full_scale":{},"battery":{},"board":{})",
         uptime, json::boolean(dry), json::quote(exec::toString(s.mode)), json::quote(s.reason), s.out.left,
         s.out.right, cfg_.getInt("teleop.max_output", 1800), in.lx, in.ly, in.rx, in.ry, json::boolean(in.deadman),
         json::boolean(in.arm), json::boolean(in.estop), json::boolean(in.linkOk), json::boolean(s.padConnected),
@@ -202,7 +214,36 @@ std::string App::snapshotJson() const {
         cfg_.getInt("watchdog.timeout_ms", 200), facts_ ? facts_->size() : 0, reason_ ? reason_->ticks() : 0,
         reason_ ? reason_->saturatedTicks() : 0, reason_ ? reason_->deltasSynced() : 0, json::quote(g.type),
         json::quote(g.target), json::quote(g.task), g.priority, g.pending, monitor_ ? monitor_->clientCount() : 0,
-        padJson(s));
+        padJson(s), driver::yahboom::kPwmFullScale, batteryJson(s), boardJson(s));
+}
+
+namespace {
+std::string optNum(std::optional<double> v) {
+    return v ? std::format("{:.2f}", *v) : "null";
+}
+}  // namespace
+
+// Battery from the motor board's $read_vol# (0.1 V steps). Thresholds come from [battery] in krbot.conf.
+std::string App::batteryJson(const exec::ManualDriveStatus& s) const {
+    const auto& c = manual_->options().battery;
+    const auto& b = s.board;
+    const bool fresh = b.batteryV && b.batteryAgeS >= 0 && b.batteryAgeS <= c.staleS;
+    const auto v = fresh ? b.batteryV : std::nullopt;
+    const auto cell = v ? std::optional<double>(*v / std::max(1, c.cells)) : std::nullopt;
+    return std::format(
+        R"({{"v":{},"age_s":{},"state":{},"cells":{},"cell_v":{},"pct":{},"warn_v":{:.2f},"low_v":{:.2f},"arm_blocked":{}}})",
+        optNum(v), b.batteryAgeS < 0 ? "null" : std::format("{:.1f}", b.batteryAgeS), common::json::quote(exec::toString(s.battery)),
+        c.cells, optNum(cell), cell ? std::format("{:.0f}", exec::lipoPercent(*cell)) : "null", c.warnV, c.lowV,
+        common::json::boolean(s.batteryArmBlocked));
+}
+
+// Motor board liveness: any reply (battery, OK, encoder report) within boardSilentS means powered + talking.
+std::string App::boardJson(const exec::ManualDriveStatus& s) const {
+    const auto& b = s.board;
+    const char* alive = !b.supported ? "null"
+                        : (b.replyAgeS >= 0 && b.replyAgeS <= manual_->options().boardSilentS) ? "true" : "false";
+    return std::format(R"({{"supported":{},"alive":{},"reply_age_s":{},"replies":{}}})", common::json::boolean(b.supported),
+                       alive, b.replyAgeS < 0 ? "null" : std::format("{:.1f}", b.replyAgeS), b.replies);
 }
 
 // Full gamepad state for the monitor's Controller tab. Keys are linux evdev codes (decimal strings, after any

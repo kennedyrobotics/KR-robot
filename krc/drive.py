@@ -69,6 +69,7 @@ class Inputs:
     arm: bool = False              # START
     estop: bool = False            # B or HOME
     link_ok: bool = True
+    arm_blocked: bool = False      # e.g. battery below battery.block_arm_below_v
 
 
 class TeleopController:
@@ -118,6 +119,8 @@ class TeleopController:
         elif arm_edge and self.mode != Mode.ARMED:
             if deadman or not self._sticks_centred(i):
                 self.reason = "arm refused: release LB and centre sticks"
+            elif i.arm_blocked:
+                self.reason = "arm refused: battery low"
             else:
                 self.mode, self.reason = Mode.ARMED, "armed"
 
