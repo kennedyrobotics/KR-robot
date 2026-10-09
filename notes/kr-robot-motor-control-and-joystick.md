@@ -70,7 +70,26 @@ Encoder readback:
 
 Serial example (from Yahboom motor docs): `$mtype:1#` selects the 520 motor type.
 
-**Outstanding (Phase 0 blocker):** full I2C register map and complete serial command set. Source: Yahboom "Control command" lesson / download at https://www.yahboom.net/study/Quad-MD-Module.
+**Command set (resolved 2026-10-09).** Source: Yahboom "1.2 Control command.pdf" in https://github.com/YahboomTechnology/4-Channel-Motor-Drive-Module (`1.Introduction/`). Commands are case-insensitive; config commands reply `<command>OK`.
+
+| Serial command | Meaning | Notes |
+|---|---|---|
+| `$mtype:x#` | Motor type: 1 = 520, 2 = 310, 3 = TT with encoder, **4 = TT without encoder** (ours) | Saved to flash |
+| `$deadzone:x#` | PWM dead zone, 0–3600 (default 1600) | Saved |
+| `$mline:x#`, `$mphase:x#`, `$wdiameter:x#` | Encoder lines, gear ratio, wheel diameter (mm) | Encoder motors only; saved |
+| `$MPID:p,i,d#` | Speed PID (default 0.8, 0.06, 0.5); the chip restarts | Encoder motors only; saved |
+| `$flash_reset#` | Factory defaults; the chip restarts | |
+| `$spd:m1,m2,m3,m4#` | Closed-loop speed, −1000…1000 | Encoder motors only; no reply |
+| `$pwm:m1,m2,m3,m4#` | **Open-loop PWM, −3600…3600** (confirms the full scale) | No reply |
+| `$upload:a,b,c#` | Stream `$MAll` (total pulses), `$MTEP` (pulses/10 ms), `$MSPD` (mm/s) | Encoder motors only |
+| `$read_flash#` | Stored settings | No reply seen on our board (2 s wait) |
+| `$read_vol#` | **Battery voltage → `$Battery:7.40V#`** (0.1 V steps) | **Verified 2026-10-09: `$Battery:6.7V#`** |
+
+I2C (address `0x26`, only if the serial link is not used): `0x01`–`0x07` mirror the config/`spd`/`pwm` commands; `0x08` reads battery (`(buf[0]<<8|buf[1])/10.0` V); `0x10`–`0x13` 10 ms pulses M1–M4; `0x20`–`0x27` total pulses.
+
+**Not available from the board:** motor current, temperature, fault flags, firmware version. Current needs extra hardware: the proposed INA226 on the battery lead (wiring manual IF-07) for total current, or a sensor per motor lead.
+
+krbot polls `$read_vol#` every second (`motor.battery_poll_ms`). The monitors show it as a Battery card, and any reply from the board counts as its heartbeat ("board: replying").
 
 ---
 
@@ -109,7 +128,7 @@ Serial example (from Yahboom motor docs): `$mtype:1#` selects the 520 motor type
 ### 4.1 Battery — NXE 2S LiPo 7.4 V 5400 mAh 50C
 - Voltage range 6.0–8.4 V — within board DC 5–12 V input.
 - Current 12 V motors run at roughly 60–70% speed and reduced torque on 2S. Acceptable for teleop.
-- **No low-voltage cutoff on the board.** Minimum ~6.6 V (3.3 V/cell). Fit a LiPo alarm on the balance lead and/or monitor voltage in software.
+- **No low-voltage cutoff on the board.** Minimum ~6.6 V (3.3 V/cell). Fit a LiPo alarm on the balance lead. **Software monitoring is in (2026-10-09):** krbot reads the board's `$read_vol#` every second, warns below `battery.warn_v` (7.0 V) and `battery.low_v` (6.6 V), and refuses to ARM on a fresh reading below `battery.block_arm_below_v` (6.6 V). It never stops a robot that is already driving. Readings are 0.1 V steps and sag under load.
 - **50C pack = very high short-circuit current.** Fit an inline fuse (~10 A) and a main power switch between battery and board.
 - Battery has Deans/T-plug; board has screw terminal — make a T-plug pigtail.
 
@@ -191,7 +210,7 @@ sudo evtest      # select new /dev/input/eventX, move sticks
 
 ## 7. Open items
 
-- [ ] Obtain Yahboom full serial command set / I2C register map (Phase 0 blocker).
+- [x] Obtain Yahboom full serial command set / I2C register map (2026-10-09, §2: Yahboom GitHub "1.2 Control command")
 - [ ] Contact seller re SN2403 2.4 GHz receiver.
 - [ ] Test SN2403 Bluetooth pairing with onboard BeagleY-AI radio (PC mode).
 - [ ] Build T-plug pigtail, inline ~10 A fuse, and main power switch.

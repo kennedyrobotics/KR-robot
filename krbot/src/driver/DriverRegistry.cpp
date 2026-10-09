@@ -20,6 +20,7 @@ std::unique_ptr<DriverRegistry> DriverRegistry::fromConfig(const common::Config&
         o.fallbackPort = cfg.getString("motor.fallback_port", o.fallbackPort);
         o.pwmKeyword = cfg.getString("motor.pwm_keyword", o.pwmKeyword);
         o.speedKeyword = cfg.getString("motor.speed_keyword", o.speedKeyword);
+        o.batteryPollMs = static_cast<int>(cfg.getInt("motor.battery_poll_ms", o.batteryPollMs));
         o.maxOutput = static_cast<int>(cfg.getInt("motor.max_output", o.maxOutput));
         o.mode = cfg.getString("motor.mode", "pwm") == "speed" ? YahboomMotorControllerDriver::Mode::Speed
                                                               : YahboomMotorControllerDriver::Mode::Pwm;

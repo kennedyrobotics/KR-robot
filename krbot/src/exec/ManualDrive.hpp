@@ -11,6 +11,7 @@
 // InputDriver over; the control loop only ever polls an already-open device (non-blocking).
 
 #include "driver/IMotorController.hpp"
+#include "exec/Battery.hpp"
 #include "exec/InputDriver.hpp"
 #include "exec/TeleopSafety.hpp"
 #include "knowledge/FactStore.hpp"
@@ -42,6 +43,10 @@ struct ManualDriveStatus {
     std::set<int> padKeys;
     std::string padId;
     bool padRemapped = false;
+    // Motor board self-report (battery, liveness) and the battery state derived from it.
+    driver::BoardStatus board;
+    BatteryState battery = BatteryState::Unknown;
+    bool batteryArmBlocked = false;
 };
 
 class ManualDrive {
@@ -50,6 +55,8 @@ public:
         TeleopConfig teleop;
         std::string gamepadPath;  // empty = auto-detect
         int rateHz = 50;
+        BatteryConfig battery;
+        double boardSilentS = 3.0;  // warn when the board has not replied for this long
     };
 
     ManualDrive(driver::IMotorController& motors, knowledge::FactStore* facts, Watchdog* watchdog, Options opts);
@@ -60,6 +67,7 @@ public:
 
     void requestEstop(std::string reason);  // thread-safe; applied on the next tick
     ManualDriveStatus status() const;
+    const Options& options() const { return opts_; }
 
     // One control step with given inputs - the loop calls this; public for tests.
     TeleopOutput step(const TeleopInputs& in, float dt);
@@ -92,6 +100,9 @@ private:
     mutable std::mutex statusMutex_;
     ManualDriveStatus status_;
     bool motorFaultLatched_ = false;
+    BatteryMonitor battery_;    // control thread only
+    bool boardSilent_ = false;  // control thread only
+    void updateBoard(TeleopInputs& in);
 };
 
 }  // namespace krbot::exec

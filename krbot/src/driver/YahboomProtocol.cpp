@@ -96,6 +96,15 @@ bool parseReport(std::string_view frame, Telemetry& telem) {
         ok = parseNumbers(rest, telem.pulses10ms);
     else if (key == "MSPD")
         ok = parseNumbers(rest, telem.speedMmS);
+    else if (key == "Battery") {  // reply to $read_vol#: "Battery:7.40V"
+        auto v = rest;
+        while (!v.empty() && (v.back() == 'V' || v.back() == 'v' || v.back() == ' ')) v.remove_suffix(1);
+        double volts = 0;
+        const auto [p, ec] = std::from_chars(v.data(), v.data() + v.size(), volts);
+        if (ec != std::errc{} || p != v.data() + v.size() || v.empty()) return false;
+        telem.batteryV = volts;
+        return true;
+    }
     if (ok) telem.any = true;
     return ok;
 }

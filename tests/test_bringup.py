@@ -36,6 +36,9 @@ class TestYahboomFraming(unittest.TestCase):
         self.assertEqual(t.total_pulses, [10, -20, 30, 40])
         self.assertTrue(parse_report("MSPD:1.5,0,0,-2.25", t))
         self.assertEqual(t.speed_mm_s, [1.5, 0.0, 0.0, -2.25])
+        self.assertTrue(parse_report("Battery:6.7V", t))      # reply to $read_vol#
+        self.assertEqual(t.battery_v, 6.7)
+        self.assertFalse(parse_report("Battery:xV", t))
         self.assertFalse(parse_report("ok", t))
         self.assertFalse(parse_report("MAll:x,y", t))
 
@@ -144,6 +147,14 @@ class TestSafety(unittest.TestCase):
         self.arm()
         run(self.ctl, Inputs(ly=-1.0, deadman=True))
         self.assertEqual(self.ctl.update(Inputs(ly=-1.0, deadman=True, link_ok=False), DT), (0, 0))
+
+    def test_arm_refused_when_blocked(self):
+        self.ctl.update(Inputs(arm=True, arm_blocked=True), DT)
+        self.assertEqual(self.ctl.mode, Mode.DISARMED)
+        self.assertEqual(self.ctl.reason, "arm refused: battery low")
+        self.ctl.update(Inputs(), DT)
+        self.ctl.update(Inputs(arm=True), DT)
+        self.assertEqual(self.ctl.mode, Mode.ARMED)
 
     def test_arm_refused_during_deadman_dropout(self):
         self.ctl.update(Inputs(deadman=True), DT)

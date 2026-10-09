@@ -14,7 +14,8 @@ static constexpr auto kTag = "L5.manual";
 
 ManualDrive::ManualDrive(driver::IMotorController& motors, knowledge::FactStore* facts, Watchdog* watchdog,
                          Options opts)
-    : motors_(motors), facts_(facts), watchdog_(watchdog), opts_(std::move(opts)), ctl_(opts_.teleop) {
+    : motors_(motors), facts_(facts), watchdog_(watchdog), opts_(std::move(opts)), ctl_(opts_.teleop),
+      battery_(opts_.battery) {
     status_.reason = ctl_.reason();
     status_.motorsHealthy = motors_.isHealthy();
 }
@@ -83,7 +84,45 @@ void ManualDrive::publishFact(const std::string& subject, const std::string& pre
     facts_->upsert(std::move(f));
 }
 
-TeleopOutput ManualDrive::step(const TeleopInputs& in, float dt) {
+void ManualDrive::updateBoard(TeleopInputs& in) {
+    const auto b = motors_.boardStatus();
+    if (b.supported) {
+        const bool silent = b.replyAgeS < 0 ? false : b.replyAgeS > opts_.boardSilentS;
+        if (silent != boardSilent_) {
+            if (silent) KLOG_WARN(kTag, "motor board not replying for {:.0f} s (powered off?)", b.replyAgeS);
+            else KLOG_INFO(kTag, "motor board replying again");
+            publishFact("motorBoard", "replying", silent ? "false" : "true");
+            boardSilent_ = silent;
+        }
+    }
+    const auto prev = battery_.state();
+    const auto now = battery_.update(b.batteryV, b.batteryAgeS);
+    if (now != prev) {
+        const double v = b.batteryV.value_or(0);
+        const auto& c = battery_.config();
+        switch (now) {
+            case BatteryState::Ok: KLOG_INFO(kTag, "battery {:.1f} V ({:.2f} V/cell) ok", v, v / c.cells); break;
+            case BatteryState::Warn: KLOG_WARN(kTag, "battery {:.1f} V ({:.2f} V/cell) - charge soon", v, v / c.cells); break;
+            case BatteryState::Low:
+                KLOG_WARN(kTag, "battery LOW {:.1f} V ({:.2f} V/cell) - stop and charge{}", v, v / c.cells,
+                          battery_.armBlocked() ? "; arming blocked" : "");
+                break;
+            case BatteryState::Unknown:
+                if (prev != BatteryState::Unknown) KLOG_WARN(kTag, "battery reading lost (no reply for {:.0f} s)", c.staleS);
+                break;
+        }
+        publishFact("battery", "state", toString(now));
+    }
+    in.armBlocked = in.armBlocked || battery_.armBlocked();
+    std::lock_guard lock(statusMutex_);
+    status_.board = b;
+    status_.battery = now;
+    status_.batteryArmBlocked = battery_.armBlocked();
+}
+
+TeleopOutput ManualDrive::step(const TeleopInputs& rawIn, float dt) {
+    TeleopInputs in = rawIn;
+    updateBoard(in);
     {
         std::lock_guard lock(estopMutex_);
         if (!pendingEstop_.empty()) {

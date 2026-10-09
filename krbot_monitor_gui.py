@@ -121,9 +121,11 @@ class MonitorApp(tk.Tk):
         pad = section(cards, "Gamepad (L5)", side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._c_pad = {k: card_row(pad, k, width=11) for k in ("status", "device", "drops")}
         mot = section(cards, "Motor board (L1)", side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._c_mot = {k: card_row(mot, k, width=11) for k in ("status", "driver", "watchdog")}
+        self._c_mot = {k: card_row(mot, k, width=11) for k in ("status", "board", "driver", "watchdog")}
+        bat = section(cards, "Battery (motor board)", side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._c_bat = {k: card_row(bat, k, width=9) for k in ("voltage", "per cell", "charge", "arming")}
 
-        out = section(f, "Track output (PWM)")
+        out = section(f, "Track output (PWM counts, % of the ±3600 full scale)")
         self._out_bars = {}
         for side in ("Left (M1)", "Right (M2)"):
             r = tk.Frame(out, bg=PANEL)
@@ -131,7 +133,7 @@ class MonitorApp(tk.Tk):
             tk.Label(r, text=side, bg=PANEL, fg=MUTED, font=(UI, 10), width=12, anchor="w").pack(side=tk.LEFT)
             b = Bar(r, width=560, height=22)
             b.pack(side=tk.LEFT, padx=6)
-            v = tk.Label(r, text="0", bg=PANEL, fg=TEXT, font=(MONO, 12, "bold"), width=7, anchor="e")
+            v = tk.Label(r, text="0", bg=PANEL, fg=TEXT, font=(MONO, 12, "bold"), width=13, anchor="e")
             v.pack(side=tk.LEFT)
             self._out_bars[side] = (b, v)
 
@@ -507,10 +509,13 @@ class MonitorApp(tk.Tk):
 
         live = bool(c.connected and s and not stale)
         pad, mot, inputs = s.get("gamepad", {}), s.get("motors", {}), s.get("inputs", {})
+        bat, board = s.get("battery") or {}, s.get("board") or {}
+        bat_v = bat.get("v")
         self._links_lbl.configure(text=(
             f"server: {'OK' if c.connected else 'DOWN'} {c.host}:{c.port}    "
             f"gamepad: {'OK' if pad.get('connected') else 'none'}    "
             f"motors: {'OK' if mot.get('healthy') else 'FAULT' if s else '-'}    "
+            f"battery: {f'{bat_v:.1f} V' if bat_v is not None else '-'}    "
             f"loop: {s.get('loop_hz', 0):.0f} Hz" if live else f"server: DOWN {c.host}:{c.port}"))
 
         if live and mode == "ARMED" and inputs.get("deadman"):
@@ -537,15 +542,34 @@ class MonitorApp(tk.Tk):
         self._c_mot["status"].configure(text=("healthy" if mot.get("healthy") else "FAULT") if s else "—",
                                         fg=GOOD if mot.get("healthy") else BAD)
         self._c_mot["driver"].configure(text=(mot.get("desc") or "—")[:34])
+        alive, age = board.get("alive"), board.get("reply_age_s")
+        self._c_mot["board"].configure(
+            text=("n/a (no self-report)" if alive is None else
+                  f"replying ({age:.1f} s ago)" if alive else
+                  f"NOT replying{f' for {age:.0f} s' if age is not None else ''}") if s and board else "—",
+            fg=TEXT if alive is None else GOOD if alive else BAD)
+        state = bat.get("state", "unknown")
+        colour = {"ok": GOOD, "warn": WARN, "low": BAD}.get(state, DIM)
+        self._c_bat["voltage"].configure(text=f"{bat_v:.1f} V  ({state})" if bat_v is not None else
+                                         ("no reading" if s else "—"), fg=colour)
+        self._c_bat["per cell"].configure(
+            text=f"{bat['cell_v']:.2f} V x {bat.get('cells', '?')}S" if bat.get("cell_v") is not None else "—", fg=colour)
+        self._c_bat["charge"].configure(
+            text=f"~{bat['pct']:.0f} %  (resting estimate)" if bat.get("pct") is not None else "—", fg=colour)
+        self._c_bat["arming"].configure(
+            text=(f"BLOCKED: below {bat.get('low_v', 0):.1f} V" if bat.get("arm_blocked") else
+                  f"allowed (warn {bat.get('warn_v', 0):.1f} / low {bat.get('low_v', 0):.1f} V)") if bat else "—",
+            fg=BAD if bat.get("arm_blocked") else TEXT)
         wd = s.get("watchdog", {})
         self._c_mot["watchdog"].configure(text=f"{wd.get('trips', '-')} trips / {wd.get('timeout_ms', '-')} ms",
                                           fg=BAD if wd.get("trips") else TEXT)
 
         out = s.get("out", {})
         scale = max(1, s.get("max_output", 1800))
+        full = max(1, s.get("pwm_full_scale", 3600))
         for (bar, lbl), v in zip(self._out_bars.values(), (out.get("left", 0), out.get("right", 0))):
             bar.set(v / scale, GOOD if v else DIM)
-            lbl.configure(text=f"{v:+d}")
+            lbl.configure(text=f"{v:+d} {100 * v / full:+4.0f}%")
 
         g, rs = s.get("goal", {}), s.get("reasoner", {})
         goal = f"{g.get('type')}({g.get('target')}) prio {g.get('priority')} {g.get('task')}" if g.get("type") else "none"

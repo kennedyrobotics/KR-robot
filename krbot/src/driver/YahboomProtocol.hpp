@@ -1,8 +1,10 @@
 #pragma once
 // Yahboom YB-ESF01 USART protocol - pure, no I/O (ported from krc/yahboom.py; same unit tests).
 // ASCII frames "$cmd:args#" at 115200 8N1. Board reports: $MAll (total pulses),
-// $MTEP (pulses per 10 ms), $MSPD (mm/s).
-// UNVERIFIED (Phase 0): the "pwm"/"spd" keywords and the ±3600 PWM full scale.
+// $MTEP (pulses per 10 ms), $MSPD (mm/s), and $Battery:7.40V in reply to $read_vol#.
+// Source: Yahboom "1.2 Control command.pdf" (github.com/YahboomTechnology/4-Channel-Motor-Drive-Module).
+// Confirmed by that document: $pwm:/$spd: keywords, PWM range ±3600, speed range ±1000. The board
+// reports no motor current, temperature or fault flags (serial or I2C).
 
 #include <array>
 #include <cstdint>
@@ -13,7 +15,7 @@
 
 namespace krbot::driver::yahboom {
 
-inline constexpr int kPwmFullScale = 3600;  // UNVERIFIED
+inline constexpr int kPwmFullScale = 3600;  // $pwm range -3600..3600 (Yahboom control command doc)
 inline constexpr unsigned kBaud = 115200;
 
 struct MotorProfile {
@@ -33,7 +35,8 @@ struct Telemetry {
     std::array<int32_t, 4> totalPulses{};
     std::array<int32_t, 4> pulses10ms{};
     std::array<double, 4> speedMmS{};
-    bool any = false;  // at least one report parsed
+    bool any = false;  // at least one encoder report parsed
+    std::optional<double> batteryV;  // last $Battery reply, volts
 };
 
 std::string formatCommand(std::string_view name, const std::vector<int>& args);
@@ -52,7 +55,7 @@ private:
     static constexpr std::size_t kMaxPending = 4096;  // drop garbage that never closes
 };
 
-// Applies $MAll / $MTEP / $MSPD to telem. Returns false if not a recognised/valid report.
+// Applies $MAll / $MTEP / $MSPD / $Battery to telem. Returns false if not a recognised/valid report.
 bool parseReport(std::string_view frame, Telemetry& telem);
 
 }  // namespace krbot::driver::yahboom

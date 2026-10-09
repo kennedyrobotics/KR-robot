@@ -65,6 +65,7 @@ endif()
 add_library(krbot_exec STATIC
   src/exec/InputDriver.cpp
   src/exec/TeleopSafety.cpp
+  src/exec/Battery.cpp
   src/exec/ManualDrive.cpp
   src/exec/Watchdog.cpp
   src/exec/GoalArbiter.cpp
@@ -99,6 +100,7 @@ if(KRBOT_BUILD_TESTS)
       tests/test_goal_arbiter.cpp
       tests/test_watchdog.cpp
       tests/test_manual_drive.cpp
+      tests/test_battery.cpp
       tests/test_monitor.cpp)
     target_link_libraries(krbot_tests PRIVATE krbot_core GTest::gtest_main)
     include(GoogleTest)

@@ -10,14 +10,16 @@ Protocol (from Yahboom USART lessons, 115200 8N1, ASCII frames "$cmd:args#"):
     $wdiameter:F#          wheel diameter, mm
     $deadzone:N#           motor dead zone (PWM counts)
     $upload:A,B,C#         enable reports: A=$MAll (total pulses), B=$MTEP (pulses/10 ms), C=$MSPD (mm/s)
-    $pwm:m1,m2,m3,m4#      open-loop PWM per channel        } exact keywords NOT yet verified on our
-    $spd:m1,m2,m3,m4#      closed-loop speed (encoders only) } board — both are overridable, see
-                                                                PWM_CMD / SPEED_CMD and `yahboom_probe.py raw`.
+    $pwm:m1,m2,m3,m4#      open-loop PWM per channel, -3600..3600
+    $spd:m1,m2,m3,m4#      closed-loop speed (encoders only), -1000..1000
+    $read_vol#             battery voltage -> "$Battery:7.40V#"
+    $read_flash#           stored settings
+Source: Yahboom "1.2 Control command.pdf" (github.com/YahboomTechnology/4-Channel-Motor-Drive-Module).
+The board reports no motor current, temperature or fault flags.
 
-Board reports arrive as "$MAll:a, b, c, d#", "$MTEP:...#", "$MSPD:...#".
+Board reports arrive as "$MAll:a, b, c, d#", "$MTEP:...#", "$MSPD:...#", "$Battery:7.40V#".
 
-UNVERIFIED (Phase 0): PWM full-scale. Yahboom STM32 firmware is believed to use ±3600;
-dead-zone defaults (1000–1900) are consistent with that. Confirm before raising max_pwm.
+PWM full scale ±3600 is confirmed by that document; dead-zone defaults (1000–1900) fit it.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ log = logging.getLogger(__name__)
 DEFAULT_PORT = "/dev/ttyAMA0"        # header UART pins 8/10 (wiring-manual §5.1b)
 FALLBACK_PORT = "/dev/krc-motor"     # USB-C link (udev symlink)
 BAUD = 115200
-PWM_FULL_SCALE = 3600                # UNVERIFIED — see module docstring
+PWM_FULL_SCALE = 3600                # confirmed: $pwm range -3600..3600
 INIT_STEP_DELAY_S = 0.1              # Yahboom reference code waits ~100 ms between config commands
 
 PWM_CMD = "pwm"
@@ -67,6 +69,7 @@ class Telemetry:
     speed_mm_s: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     last_rx: float = 0.0
     other: list[str] = field(default_factory=list)   # unrecognised lines, kept for protocol discovery
+    battery_v: float | None = None                    # last $Battery reply to $read_vol#
 
 
 def format_cmd(name: str, *args) -> bytes:
@@ -93,7 +96,7 @@ def parse_frames(buf: bytearray) -> list[str]:
 
 
 def parse_report(frame: str, telem: Telemetry) -> bool:
-    """Apply a $MAll / $MTEP / $MSPD frame to telem. Returns False if unrecognised."""
+    """Apply a $MAll / $MTEP / $MSPD / $Battery frame to telem. Returns False if unrecognised."""
     key, _, rest = frame.partition(":")
     try:
         values = [v.strip() for v in rest.split(",") if v.strip()]
@@ -101,6 +104,8 @@ def parse_report(frame: str, telem: Telemetry) -> bool:
             telem.total_pulses = [int(v) for v in values][:4]
         elif key == "MTEP":
             telem.pulses_10ms = [int(v) for v in values][:4]
+        elif key == "Battery":                       # "Battery:7.40V"
+            telem.battery_v = float(rest.strip().rstrip("Vv "))
         elif key == "MSPD":
             telem.speed_mm_s = [float(v) for v in values][:4]
         else:
