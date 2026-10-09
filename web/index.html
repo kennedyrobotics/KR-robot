@@ -299,8 +299,8 @@ function render() {
   setdd("c-bat-voltage", bat.v != null ? `${bat.v.toFixed(1)} V  (${bat.state})` : s.mode ? "no reading" : "—", bcls);
   setdd("c-bat-percell", bat.cell_v != null ? `${bat.cell_v.toFixed(2)} V × ${bat.cells}S` : "—", bcls);
   setdd("c-bat-charge", bat.pct != null ? `~${bat.pct.toFixed(0)} %  (resting estimate)` : "—", bcls);
-  setdd("c-bat-arming", !s.battery ? "—" : bat.arm_blocked ? `BLOCKED: below ${bat.low_v.toFixed(1)} V`
-        : `allowed (warn ${bat.warn_v.toFixed(1)} / low ${bat.low_v.toFixed(1)} V)`, bat.arm_blocked ? "bad" : "");
+  setdd("c-bat-arming", !s.battery ? "—" : bat.arm_blocked ? `BLOCKED (< ${bat.block_v.toFixed(1)} V)`
+        : bat.block_v > 0 ? `allowed (≥ ${bat.block_v.toFixed(1)} V)` : "never blocked", bat.arm_blocked ? "bad" : "");
   const wd = s.watchdog || {};
   setdd("c-mot-watchdog", `${wd.trips ?? "-"} trips / ${wd.timeout_ms ?? "-"} ms`, wd.trips ? "bad" : "");
 

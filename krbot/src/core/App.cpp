@@ -97,6 +97,7 @@ void App::start() {
     bc.lowV = cfg_.getDouble("battery.low_v", bc.lowV);
     bc.blockArmBelowV = cfg_.getDouble("battery.block_arm_below_v", bc.blockArmBelowV);
     bc.staleS = cfg_.getDouble("battery.stale_s", bc.staleS);
+    bc.minValidV = cfg_.getDouble("battery.min_valid_v", bc.minValidV);
     manual_ = std::make_unique<exec::ManualDrive>(motors, facts_.get(), watchdog_.get(), mo);
 
     arbiter_ = std::make_unique<exec::GoalArbiter>(
@@ -227,13 +228,13 @@ std::string optNum(std::optional<double> v) {
 std::string App::batteryJson(const exec::ManualDriveStatus& s) const {
     const auto& c = manual_->options().battery;
     const auto& b = s.board;
-    const bool fresh = b.batteryV && b.batteryAgeS >= 0 && b.batteryAgeS <= c.staleS;
+    const bool fresh = b.batteryV && *b.batteryV >= c.minValidV && b.batteryAgeS >= 0 && b.batteryAgeS <= c.staleS;
     const auto v = fresh ? b.batteryV : std::nullopt;
     const auto cell = v ? std::optional<double>(*v / std::max(1, c.cells)) : std::nullopt;
     return std::format(
-        R"({{"v":{},"age_s":{},"state":{},"cells":{},"cell_v":{},"pct":{},"warn_v":{:.2f},"low_v":{:.2f},"arm_blocked":{}}})",
+        R"({{"v":{},"age_s":{},"state":{},"cells":{},"cell_v":{},"pct":{},"warn_v":{:.2f},"low_v":{:.2f},"block_v":{:.2f},"arm_blocked":{}}})",
         optNum(v), b.batteryAgeS < 0 ? "null" : std::format("{:.1f}", b.batteryAgeS), common::json::quote(exec::toString(s.battery)),
-        c.cells, optNum(cell), cell ? std::format("{:.0f}", exec::lipoPercent(*cell)) : "null", c.warnV, c.lowV,
+        c.cells, optNum(cell), cell ? std::format("{:.0f}", exec::lipoPercent(*cell)) : "null", c.warnV, c.lowV, c.blockArmBelowV,
         common::json::boolean(s.batteryArmBlocked));
 }
 

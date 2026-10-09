@@ -51,6 +51,17 @@ TEST(Battery, StaleReadingIsUnknownAndNeverBlocks) {
     EXPECT_FALSE(m.armBlocked());
 }
 
+TEST(Battery, ImplausibleReadingIsIgnored) {
+    // the board replies $Battery:0.0V for a moment after power-up (seen 2026-10-09)
+    BatteryMonitor m;
+    EXPECT_EQ(m.update(0.0, 0.2), BatteryState::Unknown);  // nothing valid yet: stays unknown
+    EXPECT_FALSE(m.armBlocked());
+    EXPECT_EQ(m.update(7.6, 0.2), BatteryState::Ok);
+    EXPECT_EQ(m.update(0.0, 0.2), BatteryState::Ok);       // ignored: keeps the last good state
+    EXPECT_FALSE(m.armBlocked());
+    EXPECT_EQ(m.update(3.9, 0.2), BatteryState::Ok);       // still below the 4.0 V floor
+}
+
 TEST(Battery, ArmBlockThresholdAndDisable) {
     BatteryMonitor m;
     m.update(6.6, 0.5);
