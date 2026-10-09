@@ -238,6 +238,12 @@ flowchart LR
 | **Events** | Live log with level colours, follow, save. The periodic status lines are hidden by default |
 | **Service** | Start, Start DRY RUN, Stop, Restart, Boot on/off, Rebuild. These are local only; the tab is disabled when monitoring a remote host |
 
+| Overview | Controller |
+|---|---|
+| ![KR-bot Monitor desktop app, Overview tab: mode banner, server / gamepad / motor board / battery cards, track output bars and the 5-layer panel](docs/images/screenshots/desktop-overview.png) | ![KR-bot Monitor desktop app, Controller tab: live gamepad picture and the press-each-button maintenance checklist](docs/images/screenshots/desktop-controller.png) |
+| **Inputs** | **Service** |
+| ![KR-bot Monitor desktop app, Inputs tab: both sticks and the deadman / arm / e-stop / link state](docs/images/screenshots/desktop-inputs.png) | ![KR-bot Monitor desktop app, Service tab: krbot.service state and start / stop / boot / rebuild buttons](docs/images/screenshots/desktop-service.png) |
+
 **Safety model:**
 
 - SPACE, ESC and the red button send **E-STOP**. The server's only other command is `ping`, so there is **no remote arm**.
@@ -257,6 +263,10 @@ flowchart LR
     N -- "127.0.0.1:8765" --> W["krbot_web.py<br/>(krbot-web.service, user)"]
     W -- "one TCP client<br/>127.0.0.1:5765" --> K["krbot<br/>MonitorServer"]
 ```
+
+| PC browser: Overview | PC browser: Controller | Phone |
+|---|---|---|
+| ![KR-bot Web Monitor in a PC browser, Overview tab with the battery card](docs/images/screenshots/web-overview.png) | ![KR-bot Web Monitor in a PC browser, Controller tab](docs/images/screenshots/web-controller.png) | ![KR-bot Web Monitor on a phone-width screen](docs/images/screenshots/web-phone.png) |
 
 - **Server:** [krbot_web.py](krbot_web.py), stdlib only. It holds one connection to `krbot`'s monitor server and fans it out to up to 16 browsers with Server-Sent Events (status at 10 Hz, log lines as they happen, the last 200 log lines replayed on connect).
 - **Page:** [web/index.html](web/index.html), one self-contained file. Tabs: Overview, Inputs, Controller, Events. Follows the browser's light/dark setting and fits a phone. `/#controller` (etc.) opens a tab directly.
